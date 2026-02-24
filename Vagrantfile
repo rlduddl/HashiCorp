@@ -18,9 +18,9 @@ Vagrant.configure("2") do |config|
 	  cfg.vm.network "private_network", ip: "192.168.56.11"
 	  cfg.vm.network "forwarded_port", guest: 22, host: 60011, auto_correct: true, id: "ssh"
 	  cfg.vm.synced_folder "./data", "/vagrant", disabled: false
-    cfg.vm.provision "shell", inline: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*"
-    cfg.vm.provision "shell", inline: "sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*"	 
-	  # cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
+      cfg.vm.provision "shell", inline: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*"
+      cfg.vm.provision "shell", inline: "sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*"	 
+	  cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
     end
   
   #Ansible-Node02	 
@@ -34,9 +34,9 @@ Vagrant.configure("2") do |config|
 	  cfg.vm.network "private_network", ip: "192.168.56.12"
 	  cfg.vm.network "forwarded_port", guest: 22, host: 60012, auto_correct: true, id: "ssh"
 	  cfg.vm.synced_folder "./data", "/vagrant", disabled: false
-    cfg.vm.provision "shell", inline: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*"
-    cfg.vm.provision "shell", inline: "sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*"
-	  # cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
+      cfg.vm.provision "shell", inline: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*"
+      cfg.vm.provision "shell", inline: "sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*"
+	  cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
     end
 
   #Ansible-Node03	 
@@ -50,10 +50,61 @@ Vagrant.configure("2") do |config|
 	  cfg.vm.network "private_network", ip: "192.168.56.13"
 	  cfg.vm.network "forwarded_port", guest: 22, host: 60013, auto_correct: true, id: "ssh"
 	  cfg.vm.synced_folder "./data", "/vagrant", disabled: false
-    cfg.vm.provision "shell", inline: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*"
-    cfg.vm.provision "shell", inline: "sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*"	 
-	  # cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
+      cfg.vm.provision "shell", inline: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*"
+      cfg.vm.provision "shell", inline: "sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*"	 
+	  cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
     end
+
+  #==============#
+  # Ubuntu nodes #
+  #==============#
+  
+  #Ansible-Node04
+  config.vm.define "ansible-node04" do |cfg|
+    cfg.vm.box = "ubuntu/focal64"
+	cfg.vm.provider "virtualbox" do |vb|
+	    vb.name = "Ansible-Node04(github_SysNet4Admin)"
+	end
+	cfg.vm.host_name = "ansible-node04"
+	# NIC1: Host-Only
+	cfg.vm.network "private_network", ip: "192.168.56.14"
+	cfg.vm.network "forwarded_port", guest: 22, host: 60014, auto_correct: true, id: "ssh"
+	cfg.vm.synced_folder "./data", "/vagrant", disabled: false
+	cfg.vm.provision "shell", path: "bash_ssh_conf_4_Ubuntu.sh"
+  end
+
+
+
+  #Ansible-Node05
+  config.vm.define "ansible-node05" do |cfg|
+    cfg.vm.box = "ubuntu/focal64"
+	cfg.vm.provider "virtualbox" do |vb|
+	    vb.name = "Ansible-Node05(github_SysNet4Admin)"
+	end
+	cfg.vm.host_name = "ansible-node05"
+	# NIC1: Host-Only
+	cfg.vm.network "private_network", ip: "192.168.56.15"
+	cfg.vm.network "forwarded_port", guest: 22, host: 60015, auto_correct: true, id: "ssh"
+	cfg.vm.synced_folder "./data", "/vagrant", disabled: false
+	cfg.vm.provision "shell", path: "bash_ssh_conf_4_Ubuntu.sh"
+  end  
+
+
+
+  #Ansible-Node06
+  config.vm.define "ansible-node06" do |cfg|
+    cfg.vm.box = "ubuntu/focal64"
+	cfg.vm.provider "virtualbox" do |vb|
+	    vb.name = "Ansible-Node06(github_SysNet4Admin)"
+	end
+	cfg.vm.host_name = "ansible-node06"
+	# NIC1: Host-Only
+	cfg.vm.network "private_network", ip: "192.168.56.16"
+	cfg.vm.network "forwarded_port", guest: 22, host: 60016, auto_correct: true, id: "ssh"
+	cfg.vm.synced_folder "./data", "/vagrant", disabled: false
+	cfg.vm.provision "shell", path: "bash_ssh_conf_4_Ubuntu.sh"
+  end  
+
 
   #================#
   # Ansible Server #
@@ -69,14 +120,14 @@ Vagrant.configure("2") do |config|
 	  cfg.vm.network "private_network", ip: "192.168.56.10"
 	  cfg.vm.network "forwarded_port", guest: 22, host: 60010, auto_correct: true, id: "ssh"
 	  cfg.vm.synced_folder "./data", "/vagrant", disabled: false
-    cfg.vm.provision "shell", inline: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*"
-    cfg.vm.provision "shell", inline: "sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*"
-    # cfg.vm.provision "shell", inline: "yum install epel-release -y"
-	  # cfg.vm.provision "shell", inline: "yum install ansible -y"
-	  # cfg.vm.provision "file", source: "ansible_env_ready.yml", 
-	  #   destination: "ansible_env_ready.yml"
-	  # cfg.vm.provision "shell", inline: "ansible-playbook ansible_env_ready.yml"
-	  # cfg.vm.provision "shell", path: "add_ssh_auth.sh", privileged: false
-    # cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
+      cfg.vm.provision "shell", inline: "sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*"
+      cfg.vm.provision "shell", inline: "sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*"
+      cfg.vm.provision "shell", inline: "yum install epel-release -y"
+	  cfg.vm.provision "shell", inline: "yum install ansible -y"
+	  cfg.vm.provision "file", source: "ansible_env_ready.yml", 
+	  destination: "ansible_env_ready.yml"
+	  cfg.vm.provision "shell", inline: "ansible-playbook ansible_env_ready.yml"
+	  cfg.vm.provision "shell", path: "add_ssh_auth.sh", privileged: false
+      cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
   end
 end
