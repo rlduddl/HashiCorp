@@ -1,0 +1,40 @@
+- name: Install nginx on Windows
+  hosts: Windows
+  gather_facts: no
+  vars:
+    ansible_port: 5985
+    ansible_connection: winrm
+    ansible_user: administrator
+    ansible_password: vagrant
+    ansible_winrm_transport: basic
+    ansible_winrm_scheme: http
+    ansible_winrm_server_cert_validation: ignore
+
+  tasks:
+    - name: install nginx
+      win_chocolatey:
+        name: nginx
+        state: present
+
+    - name: install NSSM
+      win_chocolatey:
+        name: nssm
+        state: present
+
+    - name: download new index.html
+      win_get_url:
+        url: https://www.apache.com
+        dest: C:\tools\nginx-1.29.5\html\index.html
+
+    - name: nginx service on by NSSM
+      win_nssm:
+        name: nginx
+        application: C:\tools\nginx-1.29.5\nginx.exe
+        app_directory: C:\tools\nginx-1.29.5
+        state: present
+
+    - name: start nginx service
+      win_service:
+        name: nginx
+        state: started
+        start_mode: auto

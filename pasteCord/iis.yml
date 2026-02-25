@@ -1,0 +1,75 @@
+---
+- name: Windows Server 2016 IIS 설치/삭제 단일 플레이북 (로컬 index.html 전송)
+  hosts: windows
+  gather_facts: no
+
+  tasks:
+    # =========================================
+    # 🌐 IIS 설치/구성 (install 태그로만 실행)
+    # =========================================
+    - name: IIS(Web-Server) 및 관리 콘솔 설치
+      win_feature:
+        name:
+          - Web-Server
+          - Web-Mgmt-Console
+        state: present
+        include_sub_features: yes
+        include_management_tools: yes
+      tags:
+        - install
+
+    - name: 웹 루트 폴더 생성
+      win_file:
+        path: C:\inetpub\wwwroot
+        state: directory
+      tags:
+        - install
+
+    - name: 로컬 index.html 파일을 IIS 웹 루트로 전송
+      win_copy:
+        src: ./index.html
+        dest: C:\inetpub\wwwroot\index.html
+      tags:
+        - install
+
+    - name: IIS 서비스(W3SVC) 시작 및 자동 시작
+      win_service:
+        name: W3SVC
+        state: started
+        start_mode: auto
+      tags:
+        - install
+
+        - name: IIS 서비스(W3SVC) 중지
+      win_service:
+        name: W3SVC
+        state: stopped
+      ignore_errors: yes
+      tags:
+        - remove
+
+    - name: IIS(Web-Server) 및 관리 콘솔 제거
+      win_feature:
+        name:
+          - Web-Server
+          - Web-Mgmt-Console
+        state: absent
+        include_sub_features: yes
+        include_management_tools: yes
+      tags:
+        - remove
+         
+    - name: wwwroot 폴더 소유권 가져오기
+      win_shell: |
+        takeown /f C:\inetpub\wwwroot /r /d y
+        icacls C:\inetpub\wwwroot /grant Administrators:F /t
+      tags:
+        - remove
+
+
+    - name: 웹 루트 폴더 삭제
+      win_file:
+        path: C:\inetpub\wwwroot
+        state: absent
+      tags:
+        - remove

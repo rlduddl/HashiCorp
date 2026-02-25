@@ -106,6 +106,26 @@ Vagrant.configure("2") do |config|
   end  
 
 
+#   #==============#
+#   # Windows nodes #
+#   #==============#
+  
+#   #Ansible-Node07
+#   config.vm.define "ansible-node07" do |cfg|
+#     cfg.vm.box = "sysnet4admin/Windows2016"
+# 	  cfg.vm.provider "virtualbox" do |vb|
+# 	    vb.name = "Ansible-Node07(github_SysNet4Admin)"
+# 		vb.customize ['modifyvm', :id, '--clipboard', 'bidirectional']
+# 	    vb.gui = false
+# 	  end
+# 	  cfg.vm.host_name = "ansible-node07"
+# 	# NIC1: Host-Only
+# 	  cfg.vm.network "private_network", ip: "192.168.56.17"
+# 	  cfg.vm.network "forwarded_port", guest: 22, host: 60017, auto_correct: true, id: "ssh"
+# 	  cfg.vm.synced_folder "./data", "/vagrant", disabled: false
+#       cfg.vm.provision "shell", inline: "netsh advfirewall set allprofiles state off"
+#     end  
+
   #================#
   # Ansible Server #
   #================#
@@ -125,9 +145,10 @@ Vagrant.configure("2") do |config|
       cfg.vm.provision "shell", inline: "yum install epel-release -y"
 	  cfg.vm.provision "shell", inline: "yum install ansible -y"
 	  cfg.vm.provision "file", source: "ansible_env_ready.yml", 
-	  destination: "ansible_env_ready.yml"
+	    destination: "ansible_env_ready.yml"
 	  cfg.vm.provision "shell", inline: "ansible-playbook ansible_env_ready.yml"
-	  cfg.vm.provision "shell", path: "add_ssh_auth.sh", privileged: false
+	  cfg.vm.provision "file", source: "auto_pass.yml", destination: "auto_pass.yml"
+	  cfg.vm.provision "shell", inline: "ansible-playbook auto_pass.yml", privileged: false
       cfg.vm.provision "shell", path: "bash_ssh_conf_4_CentOS.sh"
   end
 end
