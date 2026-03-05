@@ -1,0 +1,77 @@
+  Instance1ENIEth0:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref NATInstanceVPC1Subnet1
+      Description: Instance1 eth0
+      GroupSet:
+      - !Ref VPC1NATInstanceSecurityGroup
+      PrivateIpAddress: 10.40.1.100
+      Tags:
+        - Key: Name
+          Value: NAT-Instance eth0
+
+  VPCEIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  VPCAssociateEIP1:
+    Type: AWS::EC2::EIPAssociation
+    DependsOn: Instance1
+    Properties:
+      AllocationId: !GetAtt VPCEIP1.AllocationId
+      NetworkInterfaceId: !Ref Instance1ENIEth0
+
+
+
+
+  Instance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      SourceDestCheck: false
+      Tags:
+        - Key: Name
+          Value: Test-Instance1
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          # SubnetId: !Ref NATInstanceVPC1Subnet1
+          # GroupSet:
+          #   - !Ref   VPC1NATInstanceSecurityGroup
+          # AssociatePublicIpAddress: true #ip만듬
+          NetworkInterfaceId: !Ref Instance1ENIEth0
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          IFACE="$(ip route show default | awk '/default/ {print $5; exit}')"
+
+          dnf install -y iptables-services
+          systemctl enable --now iptables
+
+          cat >/etc/sysctl.d/90-nat.conf <<'EOF'
+          net.ipv4.ip_forward=1
+          EOF
+
+          sysctl --system
+
+          /sbin/iptables -t nat -F
+          /sbin/iptables -F FORWARD
+          /sbin/iptables -P FORWARD ACCEPT
+          /sbin/iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+          service iptables save
+
+
+
+
+
+  NATRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: Instance1
+    Properties:
+      RouteTableId: !Ref NATInstancePrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NetworkInterfaceId: !Ref Instance1ENIEth0

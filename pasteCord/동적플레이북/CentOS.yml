@@ -1,0 +1,13 @@
+- name: install epel-release for CentOS
+  action: "{{ ansible_pkg_mgr }} name=epel-release state=latest"
+
+- name: install nginx web server for CentOS
+  action: "{{ ansible_pkg_mgr }} name=nginx state=present"
+
+- name: upload default index.html for web server
+  copy:
+    src: index.html
+    dest: /usr/share/nginx/html/index.html
+
+  notify:
+    - restart nginx web server

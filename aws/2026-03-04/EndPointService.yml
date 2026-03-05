@@ -1,0 +1,334 @@
+Parameters:
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+Resources:
+
+# =========================
+# VPC
+# =========================
+  MyVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: My-VPC
+
+
+  CustomVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 20.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Custom-VPC
+
+
+
+
+# =========================
+# Subnets
+# =========================
+  MyPublicSn:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVpc
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: My-Public-SN
+
+
+  CustomPublicSn:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CustomVpc
+      CidrBlock: 20.0.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Custom-Public-SN
+
+
+
+# =========================
+# IGW
+# =========================
+  MyIgw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-IGW
+
+  MyVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVpc
+      InternetGatewayId: !Ref  MyIgw
+
+
+  CustomIgw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Custom-IGW
+
+  CustomVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref CustomVpc
+      InternetGatewayId: !Ref  CustomIgw
+
+
+# =========================
+# Route Tables
+# =========================
+  MyPublicRt:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVpc
+      Tags:
+        - Key: Name
+          Value: My-Public-RT
+
+  MyPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MyVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref  MyPublicRt
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIgw
+
+  MyPublicRtAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MyPublicSn
+      RouteTableId: !Ref MyPublicRt
+
+
+
+
+  CustomPublicRt:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CustomVpc
+      Tags:
+        - Key: Name
+          Value: Custom-Public-RT
+
+  CustomPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: CustomVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref  CustomPublicRt
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CustomIgw
+
+  CustomPublicRtAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref CustomPublicSn
+      RouteTableId: !Ref CustomPublicRt
+  
+
+
+
+# =========================
+# Security Groups
+# =========================
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable http access via port 80 and ssh access via...
+      VpcId: !Ref MyVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp #ping용
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+
+  CustomSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable http access via port 80 and ssh access via...
+      VpcId: !Ref CustomVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp #ping용
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+
+
+
+# =========================
+# EC2
+# =========================
+#My EC2
+  MyEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: My-EC2
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref MyPublicSn
+          GroupSet:
+            - !Ref   MySecurityGroup
+          AssociatePublicIpAddress: true #ip만듬
+
+
+#Custom WEB 1
+  CustomWeb1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Custom-WEB-1
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref CustomPublicSn
+          GroupSet:
+            - !Ref   CustomSecurityGroup
+          AssociatePublicIpAddress: true #ip만듬
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl enable --now httpd
+          echo "<h1>Custom WEB 1</h1>" > /var/www/html/index.html
+
+
+#Custom WEB 2
+  CustomWeb2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Custom-WEB-2
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref CustomPublicSn
+          GroupSet:
+            - !Ref   CustomSecurityGroup
+          AssociatePublicIpAddress: true #ip만듬
+
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          systemctl enable --now httpd
+          echo "<h1>Custom WEB 2</h1>" > /var/www/html/index.html
+
+
+
+
+
+# 로드발란서
+
+  CustomNLBTG:
+    Type:  AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: Custom-NLB-TargetGroup
+      Port: 80
+      Protocol: TCP
+      VpcId: !Ref CustomVpc
+      Targets:
+        - Id: !Ref CustomWeb1
+          Port: 80
+        - Id: !Ref CustomWeb2
+          Port: 80
+
+
+  CustomNLB:
+    Type:  AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: CustomVpcGatewayAttachment
+    Properties:
+      Type: network
+      Scheme: internet-facing
+      Subnets:
+        - !Ref CustomPublicSn
+      Tags:
+        - Key: Name
+          Value: Custom-NLB
+
+
+  NLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref CustomNLBTG
+      LoadBalancerArn: !Ref CustomNLB
+      Port: 80
+      Protocol: TCP  
+
+
+
+
+# 엔드포인트 서비스
+
+
+
+
+  EndPointService:
+    Type: AWS::EC2::VPCEndpointService
+    Properties:
+      NetworkLoadBalancerArns:
+        - !Ref CustomNLB
+      AcceptanceRequired: false
+
+  Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref MyVpc
+      VpcEndpointType: 'Interface'
+      SubnetIds:
+      - !Ref MyPublicSn
+      SecurityGroupIds:
+      - !Ref  MySecurityGroup
+      ServiceName: !Sub
+        - 'com.amazonaws.vpce.${AWS::Region}.${EndPointService}'
+        - EndPointService: !Ref EndPointService

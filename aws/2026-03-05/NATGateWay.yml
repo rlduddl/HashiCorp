@@ -1,0 +1,21 @@
+  NATGateWay:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      SubnetId: !Ref NATInstanceVPC1Subnet1
+      Tags:
+        - Key: Name
+          Value: NAT-GatewayId
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NATGateWay
+    Properties:
+      RouteTableId: !Ref NATInstancePrivateRouteTable1   
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateWay

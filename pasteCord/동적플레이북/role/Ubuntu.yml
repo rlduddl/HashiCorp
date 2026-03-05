@@ -1,0 +1,12 @@
+- name: install nginx web server for {{ ansible_distribution }}
+  action: "{{ ansible_pkg_mgr }} name=nginx state=present update_cache=yes"
+
+- name: create web page for each node
+  template:
+    src: index.j2
+    dest: /usr/share/nginx/html/index.html
+    mode: 0644
+    backup: yes
+
+  notify:
+    - restart nginx web server

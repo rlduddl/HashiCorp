@@ -1,0 +1,10 @@
+- name: install nginx web server for Ubuntu
+  action: "{{ ansible_pkg_mgr }} name=nginx state=present update_cache=yes"
+
+- name: upload default index.html for web server
+  copy:
+    src: index2.html
+    dest: /var/www/html/index.html
+
+  notify:
+    - restart nginx web server
