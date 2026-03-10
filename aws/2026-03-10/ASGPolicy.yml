@@ -1,0 +1,41 @@
+# 동적 조정 정책
+
+  ASGPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref ASG1
+      PolicyType: TargetTrackingScaling
+      PolicyName: Scale-Out-Policy
+      TargetTrackingConfiguration:
+        PredefinedMetricType: ASGAverageCPUUtilization
+      TargetValue: 50
+      DisableScaleIn: true
+
+  ScaleInSimplePolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref ASG1
+      PolicyType: SimpleScaling
+      PolicyName: Scale-In-Policy
+      AdjustmentType: ChangeInCapacity
+      ScalingAdjustment: -1
+      Cooldown: 60
+
+  LowCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: 'CPU <= threshold -> scale in'
+      Namespace: AWS/EC2
+      MetricName: CPUUtiliaztion
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref ASG1
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 10
+      ComparisonOperator: LessThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !GetAtt ScaleInSimplePolicy.Arn

@@ -1,0 +1,67 @@
+  # =========================
+  # ALB
+  # =========================
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Name: VPC1-Seoul-AWS-ALB
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+
+  # =========================
+  # ALB Target Group
+  # =========================
+  ALBTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: WebServer2
+    Properties:
+      Name: ALBTG
+      Port: 80
+      Protocol: HTTP
+      HealthCheckIntervalSeconds: 10
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref VPC1
+      Targets:
+        - Id: !Ref WebServer1
+          Port: 80
+        - Id: !Ref WebServer2
+          Port: 80
+      Tags:
+        - Key: Name
+          Value: VPC1-Seoul-AWS-ALBTG
+
+
+  # =========================
+  # ALB Listener
+  # =========================
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+
+
+# sg
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB Security Group
+      VpcId: !Ref VPC1
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+
+# CidrIp: 10.1.0.0/16  ->>   SourceSecurityGroupId: !Ref ALBSecurityGroup
