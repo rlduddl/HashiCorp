@@ -1,0 +1,318 @@
+Parameters:
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  LatestAmiTd:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+
+# =========================
+# VPC
+# =========================
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: MyVPC
+
+
+# =========================
+# Internet Gateway
+# =========================
+  MyIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MyIGW
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref MyIGW
+
+
+# =========================
+# Subnets
+# =========================
+  MyPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: MyPublicSN1
+
+  MyPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: MyPublicSN2
+
+
+
+# =========================
+# Route Tables
+# =========================
+  MyPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIGW
+
+  PublicSubnet1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MyPublicSN1
+      RouteTableId: !Ref MyPublicRT
+
+  PublicSubnet2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MyPublicSN2
+      RouteTableId: !Ref MyPublicRT
+
+
+
+
+
+# =========================
+# Security Groups
+# =========================
+
+
+
+
+  WEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web SG
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          # SourceSecurityGroupId: !Ref ALBSecurityGroup
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: icmp #ping용
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+
+
+
+
+
+# ec2
+  
+  EC21:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref MyPublicSN1
+      SecurityGroupIds:
+        - !Ref WEBSG
+      Tags:
+        - Key: Name
+          Value: EC2-1
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+          echo "EC2-1" > /var/www/html/index.html
+
+  EC22:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref MyPublicSN2
+      SecurityGroupIds:
+        - !Ref WEBSG
+      Tags:
+        - Key: Name
+          Value: EC2-2
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+          echo "EC2-2" > /var/www/html/index.html
+
+
+
+
+
+
+
+  # =========================
+  # ALB
+  # =========================
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Name: MyALB
+      SecurityGroups:
+        - !Ref WEBSG
+      Subnets:
+        - !Ref MyPublicSN1
+        - !Ref MyPublicSN2
+
+
+  # =========================
+  # ALB Target Group
+  # =========================
+  ALBTG1:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    # DependsOn: WebServer2
+    Properties:
+      Name: ALBTG1
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref MyVPC
+      Targets:
+        - Id: !Ref EC21
+          Port: 80
+        - Id: !Ref EC22
+          Port: 80
+      Tags:
+        - Key: Name
+          Value: MyVPC-Seoul-AWS-ALBTG
+
+
+ 
+
+  # =========================
+  # ALB Listener
+  # =========================
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG1
+
+# Route53
+  PublicDNS:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: lilysua.cloud
+      HostedZoneConfig:
+        Comment: Public hosted zone For liilysu.cloud
+
+
+# ALBAlias
+  ALBAlias:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: alb.lilysua.cloud
+      Type: A
+      HostedZoneId: !Ref PublicDNS
+      AliasTarget:
+        DNSName: !GetAtt ALB.DNSName
+        HostedZoneId: !GetAtt ALB.CanonicalHostedZoneID
+
+
+
+
+
+
+
+
+
+  
+# 장애조치라우팅
+  PrimaryHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        IPAddress: !GetAtt EC21.PublicIp
+        Port: 80
+        Type: HTTP
+        ResourcePath: /index.html
+      HealthCheckTags:
+        - Key: Name
+          Value: Primary-Check
+
+
+  SecondaryHealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        IPAddress: !GetAtt EC22.PublicIp
+        Port: 80
+        Type: HTTP
+        ResourcePath: /index.html
+      HealthCheckTags:
+        - Key: Name
+          Value: Secondary-Check
+
+
+  PrimaryRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: www.lilysua.cloud
+      Type: A
+      TTL: 30
+      HostedZoneId: !Ref PublicDNS
+      ResourceRecords:
+        - !GetAtt EC21.PublicIp
+      Failover: PRIMARY
+      SetIdentifier: 1
+      HealthCheckId: !Ref PrimaryHealthCheck
+
+  SecondaryRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: www.lilysua.cloud
+      Type: A
+      TTL: 30
+      HostedZoneId: !Ref PublicDNS
+      ResourceRecords:
+        - !GetAtt EC22.PublicIp
+      Failover: SECONDARY
+      SetIdentifier: 2
+      HealthCheckId: !Ref SecondaryHealthCheck
