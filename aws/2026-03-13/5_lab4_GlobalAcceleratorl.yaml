@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  AWS Global Accelerator Standard Accelerator
+  - Listener: TCP/80
+  - Sydney(ap-southeast-2): ALB 1 endpoint
+  - Sao Paulo(sa-east-1): EC2 2 endpoints
+
+Parameters:
+  AlbSydneyDnsName:
+    Type: String
+    Description: DNS name of ALB in ap-southeast-2
+    
+  AlbSydneyCanonicalHostedZoneId:
+    Type: String
+    Description: Canonical hosted zone ID of ALB in ap-southeast-2    
+
+  # 🇦🇺 시드니 리전 - ALB 1개
+  AlbSydneyArn:
+    Type: String
+    Description: ARN of ALB in ap-southeast-2
+
+  # 🇧🇷 상파울루 리전 - EC2 2대
+  Ec2SaoPauloA:
+    Type: String
+    Description: EC2 Instance ID #1 in sa-east-1 (e.g. i-0123456789abcdef0)
+
+  Ec2SaoPauloB:
+    Type: String
+    Description: EC2 Instance ID #2 in sa-east-1 (e.g. i-0fedcba9876543210)
+
+  # 🔁 리전 다이얼 (0~100)
+  DialSydney:
+    Type: Number
+    Default: 100
+    MinValue: 0
+    MaxValue: 100
+    Description: Traffic dial for ap-southeast-2 (percentage)
+
+  DialSaoPaulo:
+    Type: Number
+    Default: 100
+    MinValue: 0
+    MaxValue: 100
+    Description: Traffic dial for sa-east-1 (percentage)
+
+  # ⚖️ 엔드포인트 가중치 (0~255)
+  WSydneyAlb:
+    Type: Number
+    Default: 255
+    MinValue: 0
+    MaxValue: 255
+    Description: Weight for ALB endpoint in ap-southeast-2
+
+  WSaoPauloEc2A:
+    Type: Number
+    Default: 128
+    MinValue: 0
+    MaxValue: 255
+    Description: Weight for EC2 instance #1 in sa-east-1
+
+  WSaoPauloEc2B:
+    Type: Number
+    Default: 128
+    MinValue: 0
+    MaxValue: 255
+    Description: Weight for EC2 instance #2 in sa-east-1
+
+Resources:
+  Accelerator:
+    Type: AWS::GlobalAccelerator::Accelerator
+    Properties:
+      Name: !Sub '${AWS::StackName}-ga'
+      Enabled: true
+      IpAddressType: IPV4
+
+  Listener:
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref Accelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 80
+          ToPort: 80
+      ClientAffinity: SOURCE_IP
+
+  # 🇦🇺 시드니 리전 엔드포인트 그룹
+  EndpointGroupSydney:
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref Listener
+      EndpointGroupRegion: ap-southeast-2
+      TrafficDialPercentage: !Ref DialSydney
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 80
+      EndpointConfigurations:
+        - EndpointId: !Ref AlbSydneyArn
+          Weight: !Ref WSydneyAlb
+
+  # 🇧🇷 상파울루 리전 엔드포인트 그룹
+  EndpointGroupSaoPaulo:
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref Listener
+      EndpointGroupRegion: sa-east-1
+      TrafficDialPercentage: !Ref DialSaoPaulo
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 80
+      EndpointConfigurations:
+        - EndpointId: !Ref Ec2SaoPauloA
+          Weight: !Ref WSaoPauloEc2A
+          ClientIpPreservationEnabled: true
+        - EndpointId: !Ref Ec2SaoPauloB
+          Weight: !Ref WSaoPauloEc2B
+          ClientIpPreservationEnabled: true
+
+  PublicDNS:
+    Type: AWS::Route53::HostedZone
+    Condition: CreateSydneyResources
+    Properties:
+      Name: 705jul.cloud
+      HostedZoneConfig:
+        Comment: Public hosted zone For 705jul.cloud
+
+  GAAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: www.705jul.cloud
+      Type: A
+      HostedZoneId: !Ref PublicDNS
+      AliasTarget:
+        DNSName: !GetAtt Accelerator.DnsName
+        HostedZoneId: Z2BJ6XQ5FK7U4H
+
+  ALBAlias:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: alb.705jul.cloud
+      Type: A
+      HostedZoneId: !Ref PublicDNS
+      AliasTarget: 
+        DNSName: !Ref AlbSydneyDnsName
+        HostedZoneId: !Ref AlbSydneyCanonicalHostedZoneId
+
+Outputs:
+  AcceleratorArn:
+    Description: ARN of Global Accelerator
+    Value: !Ref Accelerator
+
+  AcceleratorDnsName:
+    Description: Global Accelerator DNS name
+    Value: !GetAtt Accelerator.DnsName
+
+  ListenerArn:
+    Description: Listener ARN
+    Value: !Ref Listener

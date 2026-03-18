@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Singapore Region Base Stack.
+  Includes VPC, IGW, public subnet, TGW attach subnet, EC2, TGW, VPC attachment.
+  Public RT is designed with 3 routes:
+  local, default to IGW, remote VPC CIDR to TGW.
+  TGW static route for peering is left commented for later update after peering acceptance.
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  LatestAmiId:
+    Description: DO NOT CHANGE
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Resources:
+
+# =========================================================
+# VPC
+# =========================================================
+  SingaporeVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.2.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Singapore-VPC
+
+# =========================================================
+# Internet Gateway
+# =========================================================
+  SingaporeIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Singapore-IGW
+
+  SingaporeIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref SingaporeIGW
+      VpcId: !Ref SingaporeVPC
+
+# =========================================================
+# Public Route Table
+# =========================================================
+  SingaporePublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-RT
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeIGWAttachment
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SingaporeIGW
+
+# =========================================================
+# Public Subnet
+# =========================================================
+  SingaporePublicSN:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: ap-southeast-1a
+      CidrBlock: 10.2.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-SN
+
+  SingaporePublicSNRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      SubnetId: !Ref SingaporePublicSN
+
+# =========================================================
+# Security Group
+# =========================================================
+  SingaporeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP, SSH, ICMP
+      VpcId: !Ref SingaporeVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Singapore-EC2-SG
+
+# =========================================================
+# EC2
+# =========================================================
+  SingaporePublicEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-EC2
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref SingaporePublicSN
+          GroupSet:
+            - !Ref SingaporeSecurityGroup
+          PrivateIpAddress: 10.2.1.10
+          AssociatePublicIpAddress: true
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          hostnamectl --static set-hostname Singapore-EC2
+          cat <<'EOT' >> /etc/profile.d/prompt.sh
+          export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+          EOT
+          source /etc/profile
+
+# =========================================================
+# TGW Attachment Subnet
+# =========================================================
+  SingaporeTGWAttachRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: TGW-SingaporeVPC-TGWAttachRT
+
+  SingaporeTGWAttachSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: ap-southeast-1a
+      CidrBlock: 10.2.2.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-SingaporeVPC-Subnet2
+
+  SingaporeTGWAttachSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SingaporeTGWAttachRT
+      SubnetId: !Ref SingaporeTGWAttachSubnet
+
+# =========================================================
+# Transit Gateway
+# =========================================================
+  TransitGateway1:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TGW1
+
+  TransitGatewayAtt1:
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: SingaporeVPC
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      SubnetIds:
+        - !Ref SingaporeTGWAttachSubnet
+      TransitGatewayId: !Ref TransitGateway1
+      Tags:
+        - Key: Name
+          Value: TGW1-ATT1-SingaporeVPC
+
+# =========================================================
+# VPC Route to Seoul via TGW
+# 처음 설계부터 포함
+# =========================================================
+  SingaporeRouteToSeoul:
+    Type: AWS::EC2::Route
+    DependsOn: TransitGatewayAtt1
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayId: !Ref TransitGateway1
+
+# =========================================================
+# Later update after peering acceptance
+# 1) Seoul 리전에서 peering 요청 생성
+# 2) Singapore 리전에서 peering 수락
+# 3) Singapore TGW Route Table ID 확인
+# 4) 수락된 peering attachment ID 확인
+# 5) 아래 주석 해제 후 업데이트
+# =========================================================
+  # TGWStaticRoute:
+  #   Type: AWS::EC2::TransitGatewayRoute
+  #   Properties:
+  #     DestinationCidrBlock: 10.1.0.0/16
+  #     TransitGatewayRouteTableId: tgw-rtb-싱가폴TGW라우팅테이블ID
+  #     TransitGatewayAttachmentId: tgw-attach-수락된peeringattachmentID
+
+Outputs:
+  SingaporeTransitGatewayID:
+    Description: 서울 스택 배포할 때 SingaporeTGW 파라미터에 넣을 값
+    Value: !Ref TransitGateway1
+
+  SingaporeTransitGatewayAttachmentID:
+    Description: 싱가폴 VPC가 싱가폴 TGW에 붙은 Attachment ID. 확인용
+    Value: !Ref TransitGatewayAtt1
+
+  SingaporePublicRouteTableID:
+    Description: 싱가폴 퍼블릭 Route Table ID. VPC 라우팅 확인용
+    Value: !Ref SingaporePublicRT
+
+  SingaporePublicEC2PublicIP:
+    Description: 싱가폴 EC2 공인 IP. SSH 접속용
+    Value: !GetAtt SingaporePublicEC2.PublicIp
+
+  SingaporePublicEC2PrivateIP:
+    Description: 싱가폴 EC2 사설 IP. 통신 테스트용
+    Value: !GetAtt SingaporePublicEC2.PrivateIp

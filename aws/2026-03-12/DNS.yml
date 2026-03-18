@@ -1,0 +1,526 @@
+Parameters:
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  LatestAmiTd:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+
+# =========================
+# VPC
+# =========================
+  AWSVPC1:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.70.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: AWSVPC1
+
+  IDCVPC2:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.80.0.0/16
+      EnableDnsSupport: false
+      EnableDnsHostnames: false
+      Tags:
+        - Key: Name
+          Value: IDCVPC2
+
+
+# dhcp option
+
+  VPC2DNSOptions:
+      Type: AWS::EC2::DHCPOptions
+      Properties:
+        DomainName: idcneta.internal
+        DomainNameServers:
+          - 10.80.1.200
+          - 8.8.8.8
+        NtpServers:
+          - 203.248.240.140
+          - 168.126.3.6
+        Tags:
+          - Key: Name
+            Value: IDC-VPC2-DHCPOptions
+          
+  VPC2DNSOptionsAssociation:
+      Type: AWS::EC2::VPCDHCPOptionsAssociation
+      Properties:
+        DhcpOptionsId: !Ref VPC2DNSOptions
+        VpcId: !Ref IDCVPC2
+
+
+
+# VPC Peering
+
+  VPCPeering:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref AWSVPC1
+      PeerVpcId: !Ref IDCVPC2
+      Tags:
+        - Key: Name
+          Value: VPCPeering
+
+
+# AWS → IDC Route
+
+  PeeringRoute1:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - VPCPeering
+      - AWSPublicRT
+    Properties:
+      DestinationCidrBlock: 10.80.0.0/16
+      RouteTableId: !Ref AWSPublicRT
+      VpcPeeringConnectionId: !Ref VPCPeering
+
+
+# IDC → AWS Route
+
+  PeeringRoute2:
+    Type: AWS::EC2::Route
+    DependsOn:
+      - VPCPeering
+      - IDCRT
+    Properties:
+      DestinationCidrBlock: 10.70.0.0/16
+      RouteTableId: !Ref IDCRT
+      VpcPeeringConnectionId: !Ref VPCPeering
+
+
+# 호스팅 영역 생성
+
+  PrivateDNS1:
+    Type: AWS::Route53::HostedZone
+    DependsOn: AWSVPC1
+    Properties:
+      HostedZoneConfig:
+        Comment: Private hosted zone for awsneta.net
+      Name: awsneta.internal
+      VPCs:
+        - VPCId: !Ref AWSVPC1
+          VPCRegion: ap-northeast-2
+      HostedZoneTags:
+        - Key: Name
+          Value: awsnetadomain
+
+
+  DNSRecordInstance1:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PrivateDNS1
+      Comment: Dns name for AWS WEBSRV1 instance.
+      Name: websrv1.awsneta.internal
+      Type: A
+      TTL: 60
+      ResourceRecords:
+      - !GetAtt AWSWEBSRV1.PrivateIp
+
+  DNSRecordInstance2:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PrivateDNS1
+      Comment: Dns name for AWS WEBSRV2 instance.
+      Name: websrv2.awsneta.internal
+      Type: A
+      TTL: 60
+      ResourceRecords:
+      - !GetAtt AWSWEBSRV2.PrivateIp
+
+
+
+# 인바운드엔드포인트
+
+  InboundEP:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: INBOUND
+      IpAddresses:
+        - Ip: 10.70.1.250
+          SubnetId: !Ref AWSVPC1Subnet1
+        - Ip: 10.70.2.250
+          SubnetId: !Ref AWSVPC1Subnet2
+      SecurityGroupIds:
+        - !Ref WEBSG
+      Tags:
+        - Key: Name
+          Value: idc-to-aws-inbound
+
+# =========================
+# Internet Gateway
+# =========================
+  AWSIGW1:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: AWSIGW1
+
+  AttachGateway1:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref AWSVPC1
+      InternetGatewayId: !Ref AWSIGW1
+
+
+
+  IDCIGW2:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IDCIGW2
+
+  AttachGateway2:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref IDCVPC2
+      InternetGatewayId: !Ref IDCIGW2
+
+
+# =========================
+# Subnets
+# =========================
+  AWSVPC1Subnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AWSVPC1
+      CidrBlock: 10.70.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: AWSVPC1Subnet1
+
+  AWSVPC1Subnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AWSVPC1
+      CidrBlock: 10.70.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: AWSVPC1Subnet2
+
+
+  IDCVPC2Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IDCVPC2
+      CidrBlock: 10.80.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: IDCVPC2Subnet
+
+
+
+# =========================
+# Route Tables
+# =========================
+  AWSPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AWSVPC1
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway1
+    Properties:
+      RouteTableId: !Ref AWSPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref AWSIGW1
+
+  PublicSubnet1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AWSVPC1Subnet1
+      RouteTableId: !Ref AWSPublicRT
+
+  PublicSubnet2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AWSVPC1Subnet2
+      RouteTableId: !Ref AWSPublicRT
+
+
+  IDCRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IDCVPC2
+
+  IDCRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway2
+    Properties:
+      RouteTableId: !Ref IDCRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IDCIGW2
+
+  IDCAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref IDCVPC2Subnet
+      RouteTableId: !Ref IDCRT
+
+
+
+
+
+# =========================
+# Security Groups
+# =========================
+
+
+
+
+  WEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web SG
+      VpcId: !Ref AWSVPC1
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          # SourceSecurityGroupId: !Ref ALBSecurityGroup
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: icmp #ping용
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+
+
+
+
+  IDCDNSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: IDC DNS SG
+      VpcId: !Ref IDCVPC2
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+
+
+
+
+# ec2
+  
+  AWSWEBSRV1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref AWSVPC1Subnet1
+      SecurityGroupIds:
+        - !Ref WEBSG
+      PrivateIpAddress: 10.70.1.100
+      Tags:
+        - Key: Name
+          Value: AWSWEBSRV1
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+          echo "AWSWEBSRV1" > /var/www/html/index.html
+
+  AWSWEBSRV2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref AWSVPC1Subnet2
+      SecurityGroupIds:
+        - !Ref WEBSG
+      PrivateIpAddress: 10.70.2.100
+      Tags:
+        - Key: Name
+          Value: AWSWEBSRV2
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+          echo "AWSWEBSRV2" > /var/www/html/index.html
+
+
+  IDCDNSSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref IDCVPC2Subnet
+      SecurityGroupIds:
+        - !Ref IDCDNSSG
+      PrivateIpAddress: 10.80.1.200
+      Tags:
+        - Key: Name
+          Value: IDCDNSSRV
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+
+          hostnamectl --static set-hostname DNSSRV
+
+          cat <<EOF > /etc/profile.d/prompt.sh
+          export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]# "
+          EOF
+
+          dnf -y install bind bind-utils bind-libs
+
+          sed -i "s/listen-on port 53 { 127.0.0.1; }/listen-on port 53 { any; }/g" /etc/named.conf
+          sed -i "s/allow-query     { localhost; }/allow-query     { any; }/g" /etc/named.conf
+          sed -i "s/dnssec-enable yes/dnssec-enable no/g" /etc/named.conf
+          sed -i "s/dnssec-validation yes/dnssec-validation no/g" /etc/named.conf
+
+          cat <<EOF >> /etc/named.rfc1912.zones
+          zone "idcneta.internal" {
+              type master;
+              file "/var/named/db.idcneta.internal";
+              allow-update { none; };
+          };
+
+          zone "awsneta.internal" {
+              type forward;
+              forward only;
+              forwarders { 10.70.1.250; 10.70.2.250; };
+          };
+          EOF
+
+          cat <<EOF > /var/named/db.idcneta.internal
+          \$TTL 300
+          @   IN  SOA idcneta.internal. root.idcneta.internal. (
+                  2026031101   ; serial
+                  3600         ; refresh
+                  900          ; retry
+                  604800       ; expire
+                  86400        ; minimum
+          )
+
+          @           IN  NS  ns1.idcneta.internal.
+          ns1         IN  A   10.80.1.200
+          dnssrv      IN  A   10.80.1.200
+          websrv      IN  A   10.80.1.100
+          EOF
+
+          systemctl enable --now named
+          
+
+  IDCWEBSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref IDCVPC2Subnet
+      SecurityGroupIds:
+        - !Ref IDCDNSSG
+      PrivateIpAddress: 10.80.1.100
+      Tags:
+        - Key: Name
+          Value: IDCWEBSRV
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl enable httpd
+          systemctl start httpd
+          echo "IDCWEBSRV" > /var/www/html/index.html
+
+
+
+  # 아웃바운드 엔드포인트
+  OutboundEP:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: OUTBOUND
+      IpAddresses:
+        - Ip: 10.70.1.251
+          SubnetId: !Ref AWSVPC1Subnet1
+        - Ip: 10.70.2.251
+          SubnetId: !Ref AWSVPC1Subnet2
+      SecurityGroupIds:
+        - !Ref WEBSG
+      Tags:
+        - Key: Name
+          Value: aws-to-idc-outbound
+        
+
+  # 포워드규칙
+  ForwardRule:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: idcneta.internal
+      Name: AWS-To-IDC-ForwardRule
+      ResolverEndpointId: !Ref OutboundEP
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: 10.80.1.200
+          Port: 53
+
+  ResolverRuleAssociation:
+    Type: AWS::Route53Resolver::ResolverRuleAssociation
+    Properties:
+      Name: Resolver-Rule-Association
+      ResolverRuleId: !Ref ForwardRule
+      VPCId: !Ref AWSVPC1
+   

@@ -1,0 +1,35 @@
+  # 아웃바운드 엔드포인트
+  OutboundEP:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: OUTBOUND
+      IpAddresses:
+        - Ip: 10.70.1.251
+          SubnetId: !Ref AWSVPC1Subnet1
+        - Ip: 10.70.2.251
+          SubnetId: !Ref AWSVPC1Subnet2
+      SecurityGroupIds:
+        - !Ref WEBSG
+      Tags:
+        - Key: Name
+          Value: aws-to-idc-outbound
+        
+
+  # 포워드규칙
+  ForwardRule:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: idcneta.internal
+      Name: AWS-To-IDC-ForwardRule
+      ResolverEndpointId: !Ref OutboundEP
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: 10.80.1.200
+          Port: 53
+
+  ResolverRuleAssociation:
+    Type: AWS::Route53Resolver::ResolverRuleAssociation
+    Properties:
+      Name: Resolver-Rule-Association
+      ResolverRuleId: !Ref ForwardRule
+      VPCId: !Ref AWSVPC1

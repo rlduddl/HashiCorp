@@ -1,0 +1,411 @@
+Parameters:
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances. Linked to AWS Parameter
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+    
+Mappings:
+  AWSRegionArch2AMI:
+    ap-southeast-2:
+      HOST: SYDNEY
+      VPC: SYDNEY-VPC
+      IGW: SYDNEY-IGW
+      RT: SYDNEY-Public-RT
+      SN1: SYDNEY-Public-SN-1
+      SN2: SYDNEY-Public-SN-2
+      EC21: SYDNEY-EC2-1
+      EC22: SYDNEY-EC2-2
+    sa-east-1:
+      HOST: SAOPAULO
+      VPC: SAOPAULO-VPC
+      IGW: SAOPAULO-IGW
+      RT: SAOPAULO-Public-RT
+      SN1: SAOPAULO-Public-SN-1
+      SN2: SAOPAULO-Public-SN-2
+      EC21: SAOPAULO-EC2-1
+      EC22: SAOPAULO-EC2-2
+
+Conditions:
+  CreateSydneyResources: !Equals [ !Ref 'AWS::Region', ap-southeast-2 ]
+  CreateSaopauloResources: !Equals [ !Ref 'AWS::Region', sa-east-1 ]
+
+  
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', VPC]
+
+  MyIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', IGW]
+
+  MyIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref MyIGW
+      VpcId: !Ref MyVPC
+
+  MyPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', RT]
+
+  MyDefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MyIGWAttachment
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIGW
+
+  MyPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', SN1]
+
+  MyPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', SN2]
+
+  MyPublicSNRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      SubnetId: !Ref MyPublicSN1
+
+  MyPublicSNRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      SubnetId: !Ref MyPublicSN2
+
+  WEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: WEB-SG
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: icmp
+        FromPort: -1
+        ToPort: -1
+        CidrIp: 0.0.0.0/0
+
+  PublicDNS:
+    Type: AWS::Route53::HostedZone
+    Condition: CreateSydneyResources
+    Properties:
+      Name: 705jul.cloud
+      HostedZoneConfig:
+        Comment: Public hosted zone For 705jul.cloud
+
+  # myLaunchTemplate1:
+    # Type: AWS::EC2::LaunchTemplate
+    # Condition: CreateSydneyResources
+    # Properties:
+      # LaunchTemplateName: !Sub '${AWS::StackName}-1-launch-template-for-auto-scaling'
+      # LaunchTemplateData:
+        # NetworkInterfaces:
+          # - DeviceIndex: 0
+            # AssociatePublicIpAddress: true
+            # Groups:
+              # - !Ref WEBSG
+            # DeleteOnTermination: true
+        # ImageId: !Ref LatestAmiId
+        # InstanceType: t3.micro
+        # KeyName: !Ref KeyName
+        # UserData:
+          # Fn::Base64:
+            # Fn::Sub:
+              # - |
+                  #!/bin/bash
+                  # TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+                    # -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+                  # RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+                  # IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+                  # LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)              
+                  # wget https://cloudneta.github.io/test.jpg
+                  # wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+                  # dnf install -y nginx
+                  # echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : ${host} Web</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+                  # systemctl start nginx
+                  # systemctl enable nginx
+              # - host: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', HOST]
+
+
+  # myLaunchTemplate2:
+    # Type: AWS::EC2::LaunchTemplate
+    # Condition: CreateSaopauloResources
+    # Properties:
+      # LaunchTemplateName: !Sub '${AWS::StackName}-1-launch-template-for-auto-scaling'
+      # LaunchTemplateData:
+        # NetworkInterfaces:
+          # - DeviceIndex: 0
+            # AssociatePublicIpAddress: true
+            # Groups:
+              # - !Ref WEBSG
+            # DeleteOnTermination: true
+        # ImageId: !Ref LatestAmiId
+        # InstanceType: t3.micro
+        # KeyName: !Ref KeyName
+        # UserData:
+          # Fn::Base64:
+            # Fn::Sub:
+              # - |
+                  #!/bin/bash
+                  # TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+                    # -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+                  # RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+                  # IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+                  # LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)              
+                  # wget https://cloudneta.github.io/test.jpg
+                  # wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+                  # dnf install -y nginx
+                  # echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : ${host} Web</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+                  # systemctl start nginx
+                  # systemctl enable nginx
+              # - host: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', HOST]
+
+  # ASG1:
+    # Type: AWS::AutoScaling::AutoScalingGroup
+    # Condition: CreateSydneyResources
+    # Properties:
+      # AutoScalingGroupName: Sydney-ASG-1
+      # VPCZoneIdentifier:
+        # - !Ref MyPublicSN1
+        # - !Ref MyPublicSN2
+      # Cooldown: 10
+      # HealthCheckGracePeriod: 120
+      # HealthCheckType: ELB
+      # LaunchTemplate:
+        # LaunchTemplateId: !Ref myLaunchTemplate1
+        # Version: !GetAtt myLaunchTemplate1.LatestVersionNumber
+      # MaxSize: 4
+      # MinSize: 1
+      # DesiredCapacity: 2
+      # TargetGroupARNs:
+        # - !Ref ALBTargetGroup
+      # Tags:
+        # - Key: Name
+          # Value: Sydney-asg-1
+          # PropagateAtLaunch: true
+    # UpdatePolicy:
+      # AutoScalingRollingUpdate:
+        # MinInstancesInService: 1
+        # MaxBatchSize: 1
+        # PauseTime: PT2M
+
+  # ASG2:
+    # Type: AWS::AutoScaling::AutoScalingGroup
+    # Condition: CreateSaopauloResources
+    # Properties:
+      # AutoScalingGroupName: Saopaulo-ASG-1
+      # VPCZoneIdentifier:
+        # - !Ref MyPublicSN1
+        # - !Ref MyPublicSN2
+      # Cooldown: 10
+      # HealthCheckGracePeriod: 120
+      # LaunchTemplate:
+        # LaunchTemplateId: !Ref myLaunchTemplate2
+        # Version: !GetAtt myLaunchTemplate2.LatestVersionNumber
+      # MaxSize: 4
+      # MinSize: 1
+      # DesiredCapacity: 2
+      # Tags:
+        # - Key: Name
+          # Value: Saopaulo-asg-1
+          # PropagateAtLaunch: true
+    # UpdatePolicy:
+      # AutoScalingRollingUpdate:
+        # MinInstancesInService: 1
+        # MaxBatchSize: 1
+        # PauseTime: PT2M
+
+  MyEC21:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', EC21]
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref MyPublicSN1
+          GroupSet:
+          - !Ref WEBSG
+          AssociatePublicIpAddress: true
+      UserData:
+        Fn::Base64: !Sub
+          - |+
+            #!/bin/bash
+            hostname ${host}-EC2-1
+            cat <<EOT > /etc/profile.d/prompt.sh
+            export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+            EOT
+            source /etc/profile
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)              
+            wget https://cloudneta.github.io/test.jpg
+            wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+            dnf install -y nginx
+            echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+            systemctl start nginx
+            systemctl enable nginx
+          - host:
+              Fn::FindInMap: [AWSRegionArch2AMI, Ref: 'AWS::Region', HOST]
+
+  MyEC22:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: !FindInMap [AWSRegionArch2AMI, !Ref 'AWS::Region', EC22]
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref MyPublicSN2
+          GroupSet:
+          - !Ref WEBSG
+          AssociatePublicIpAddress: true
+      UserData:
+        Fn::Base64: !Sub
+          - |+
+            #!/bin/bash
+            hostname ${host}-EC2-2
+            cat <<EOT > /etc/profile.d/prompt.sh
+            export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+            EOT
+            source /etc/profile
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)              
+            wget https://cloudneta.github.io/test.jpg
+            wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+            dnf install -y nginx
+            echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+            systemctl start nginx
+            systemctl enable nginx
+          - host:
+              Fn::FindInMap: [AWSRegionArch2AMI, Ref: 'AWS::Region', HOST]
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: CreateSydneyResources
+    Properties:
+      Name: ALB-TG
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref MyVPC
+      Targets:
+        - Id: !Ref MyEC21
+          Port: 80
+        - Id: !Ref MyEC22
+          Port: 80
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: CreateSydneyResources
+    Properties:
+      Name: SYDNEY-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref WEBSG
+      Subnets:
+        - !Ref MyPublicSN1
+        - !Ref MyPublicSN2
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreateSydneyResources
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      
+
+  # GlobalAccelerator:
+    # Type: AWS::GlobalAccelerator::Accelerator
+    # Condition: CreateSydneyResources
+    # Properties:
+      # Name: !Sub '${AWS::StackName}'
+      # Enabled: true
+      # IpAddressType: IPV4
+
+  # GAListener:
+    # Type: AWS::GlobalAccelerator::Listener
+    # Condition: CreateSydneyResources
+    # Properties:
+      # AcceleratorArn: !Ref GlobalAccelerator
+      # Protocol: TCP
+      # PortRanges:
+        # - FromPort: 80
+          # ToPort: 80
+
+  # GAEndpointGroup1:
+    # Type: AWS::GlobalAccelerator::EndpointGroup
+    # Condition: CreateSydneyResources
+    # DependsOn: ApplicationLoadBalancer
+    # Properties:
+      # ListenerArn: !Ref GAListener
+      # EndpointGroupRegion: !Ref AWS::Region
+      # EndpointConfigurations:
+        # - EndpointId: !Ref ApplicationLoadBalancer
+        
+  # GAEndpointGroup2:
+    # Type: AWS::GlobalAccelerator::EndpointGroup
+    # Condition: CreateSaopauloResources
+    # Properties:
+      # ListenerArn: arn:aws:globalaccelerator::125951199018:accelerator/318b6243-db45-4834-81e1-d7cefbd4e547/listener/e40fd2e2
+      # EndpointGroupRegion: !Ref AWS::Region
+      # EndpointConfigurations:
+        # - EndpointId: i-0dfdab392e7e09387
+        # - EndpointId: i-0965e4e5d7cd19867

@@ -1,0 +1,292 @@
+Parameters:
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  LatestAmiTd:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+
+# =========================
+# VPC
+# =========================
+  SYDNEYVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SYDNEYVPC
+
+
+
+
+
+
+
+
+# =========================
+# Internet Gateway
+# =========================
+  SYDNEY1GW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SYDNEY1GW
+
+  AttachGateway1:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SYDNEYVPC
+      InternetGatewayId: !Ref SYDNEY1GW
+
+
+
+
+# =========================
+# Subnets
+# =========================
+  SYDNEYPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SYDNEYVPC
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: SYDNEYPublicSN1
+
+  SYDNEYPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SYDNEYVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: SYDNEYPublicSN2
+
+
+
+
+
+# =========================
+# Route Tables
+# =========================
+  SYDNEYPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SYDNEYVPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway1
+    Properties:
+      RouteTableId: !Ref SYDNEYPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SYDNEY1GW
+
+  PublicSubnet1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SYDNEYPublicSN1
+      RouteTableId: !Ref SYDNEYPublicRT
+
+  PublicSubnet2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SYDNEYPublicSN2
+      RouteTableId: !Ref SYDNEYPublicRT
+
+
+
+
+
+# =========================
+# Security Groups
+# =========================
+
+
+
+
+  WEBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web SG
+      VpcId: !Ref SYDNEYVPC
+      SecurityGroupIngress:
+
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          # SourceSecurityGroupId: !Ref ALBSecurityGroup
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: icmp #ping용
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+
+
+
+
+
+# ec2
+  
+  SYDNEYEC21:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SYDNEYPublicSN1
+      SecurityGroupIds:
+        - !Ref WEBSG
+      Tags:
+        - Key: Name
+          Value: SYDNEYEC21
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)              
+            wget https://cloudneta.github.io/test.jpg
+            wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+            dnf install -y nginx
+            echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : SYDNEY WEB PAGE 111111111111111111111111111111111111111111111111111111111111111</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+            systemctl start nginx
+            systemctl enable nginx
+
+  SYDNEYEC22:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SYDNEYPublicSN2
+      SecurityGroupIds:
+        - !Ref WEBSG
+      Tags:
+        - Key: Name
+          Value: SYDNEYEC22
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)              
+            wget https://cloudneta.github.io/test.jpg
+            wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+            dnf install -y nginx
+            echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : SYDNEY WEB PAGE22222222222222222222222222222222222222222222222</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+            systemctl start nginx
+            systemctl enable nginx
+
+
+
+
+
+      
+  # =========================
+  # ALB
+  # =========================
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Name: MyALB
+      SecurityGroups:
+        - !Ref WEBSG
+      Subnets:
+        - !Ref SYDNEYPublicSN1
+        - !Ref SYDNEYPublicSN2
+
+
+  # =========================
+  # ALB Target Group
+  # =========================
+  ALBTG1:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    # DependsOn: WebServer2
+    Properties:
+      Name: ALBTG1
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref SYDNEYVPC
+      Targets:
+        - Id: !Ref SYDNEYEC21
+          Port: 80
+        - Id: !Ref SYDNEYEC22
+          Port: 80
+      Tags:
+        - Key: Name
+          Value: SYDNEY-ALBTG
+
+
+ 
+
+  # =========================
+  # ALB Listener
+  # =========================
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG1
+
+# Route53 호스팅영역생성 
+  PublicDNS:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: lilysua.cloud
+      HostedZoneConfig:
+        Comment: Public hosted zone For liilysu.cloud
+
+
+
+
+# ALBAlias
+  ALBAlias:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: alb.lilysua.cloud
+      Type: A
+      HostedZoneId: !Ref PublicDNS
+      AliasTarget:
+        DNSName: !GetAtt ALB.DNSName
+        HostedZoneId: !GetAtt ALB.CanonicalHostedZoneID
