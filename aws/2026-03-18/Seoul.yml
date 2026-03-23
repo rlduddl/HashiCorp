@@ -233,30 +233,30 @@ Resources:
   #   Type: AWS::EC2::TransitGatewayRoute
   #   Properties:
   #     DestinationCidrBlock: 10.2.0.0/16
-  #     TransitGatewayRouteTableId: tgw-rtb-서울TGW라우팅테이블ID
+  #     TransitGatewayRouteTableId: tgw-rtb-0f786af816cb1ac60  #tgw-rtb-서울TGW라우팅테이블ID
   #     TransitGatewayAttachmentId: !Ref SeoulSingaporePeering
 
 Outputs:
   SeoulTransitGatewayID:
-    Description: Seoul Transit Gateway ID
+    Description: 서울 TGW ID. 싱가폴에서는 안 쓰고, 본인 확인용
     Value: !Ref TransitGateway1
 
   SeoulTransitGatewayAttachmentID:
-    Description: Seoul VPC Attachment ID
+    Description: 서울 VPC가 서울 TGW에 붙은 Attachment ID. 확인용
     Value: !Ref TransitGatewayAtt1
 
   SeoulPeeringAttachmentID:
-    Description: Seoul to Singapore TGW Peering Attachment ID
+    Description: 서울에서 생성한 TGW Peering Attachment ID. 싱가폴 리전에서 수락할 때 확인용
     Value: !Ref SeoulSingaporePeering
 
   SeoulPublicRouteTableID:
-    Description: Seoul Public Route Table ID
+    Description: 서울 퍼블릭 Route Table ID. 서울 TGW Static Route 업데이트 때는 안 쓰고, VPC 라우팅 확인용
     Value: !Ref SeoulPublicRT
 
   SeoulPublicEC2PublicIP:
-    Description: Seoul Public EC2 Public IP
+    Description: 서울 EC2 공인 IP. SSH 접속용
     Value: !GetAtt SeoulPublicEC2.PublicIp
 
   SeoulPublicEC2PrivateIP:
-    Description: Seoul Public EC2 Private IP
+    Description: 서울 EC2 사설 IP. 통신 테스트용
     Value: !GetAtt SeoulPublicEC2.PrivateIp

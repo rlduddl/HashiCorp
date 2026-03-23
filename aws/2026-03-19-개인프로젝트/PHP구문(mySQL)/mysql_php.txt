@@ -1,0 +1,364 @@
+﻿========================================================
+PHP 설치
+yum install -y php php-mysql
+========================================================
+mysql user1@'%' 사용자 생성 및 sqlDB 접속 권한 설정
+CREATE USER 'user1'@'%' IDENTIFIED BY 'P@ssw0rd';
+GRANT All privileges ON sqlDB.* TO user1@'%';
+FLUSH PRIVILEGES;
+========================================================
+vim /etc/my.cfn 아래 내용 삽입
+
+[mysqld]
+collation-server=utf8mb4_general_ci
+character-set-server=utf8mb4
+validate_password.policy=LOW
+default_authentication_plugin=mysql_native_password
+
+[client]
+default-character-set=utf8mb4
+
+[mysql]
+default-character-set=utf8mb4
+
+systemctl restart mysqld
+
+DB내의 기존 한글data도 utf8mb4로 변경해야함.
+
+DB 접속 후
+
+SHOW VARIABLES LIKE 'character_set%';
+SHOW VARIABLES LIKE 'collation%';
+
+위 명령어로 인코딩 방식 확인
+
+아래 명령어로 기존 테이블의 인코딩 방식을 utf8mb4로 변경해야함
+
+ALTER TABLE 테이블명 CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+
+=======test.php===================================================================
+<?php
+   $ex = iconv("utf8mb4", "euckr", $ex);
+   $con=mysqli_connect("localhost", "user1", "p@ssw0rd", "sqlDB");
+   if ( mysqli_connect_error($con) ) {
+      echo "MySQL 접속 실패 !!", "<br>";
+      echo "오류 원인 : ", mysqli_connect_error();
+      exit();
+   }
+   echo "MySQL 접속 완전히 성공!!";
+   mysqli_close($con);
+?>
+
+
+=======main.html===================================================================
+
+<HTML>
+<HEAD>
+<META http-equiv="content-type" content="text/html; charset=utf-8">
+</HEAD>
+<BODY>
+
+<h1> 회원 관리 시스템 </h1>
+
+<a href='select.php'> (1) 회원 조회 (조회 후 수정/삭제 가능) </a> <br><br>
+<a href='insert.php'> (2) 신규 회원 등록 </a> <br><br>
+<FORM METHOD="get"  ACTION="update.php">
+	(3) 회원 수정 - 회원 아이디 : <INPUT TYPE ="text" NAME="userID"> 
+	<INPUT TYPE="submit"  VALUE="수정">
+</FORM>
+<FORM METHOD="get"  ACTION="delete.php">
+	(4) 회원 삭제 - 회원 아이디 : <INPUT TYPE ="text" NAME="userID"> 
+	<INPUT TYPE="submit"  VALUE="삭제">
+</FORM>
+
+</BODY>
+</HTML>
+
+======select.php===================================================================
+
+
+<?php
+   $con=mysqli_connect("localhost", "user1", "p@ssw0rd", "sqlDB") or die("MySQL 접속 실패 !!");
+   mysqli_query($con, "set session character_set_connection=utf8mb4;");
+   mysqli_query($con, "set session character_set_results=utf8mb4;");
+   mysqli_query($con, "set session character_set_client=utf8mb4;");
+   $sql ="SELECT * FROM userTBL";
+ 
+   $ret = mysqli_query($con, $sql);   
+   if($ret) {
+	   //echo mysqli_num_rows($ret), "건이 조회됨..<br><br>";
+	   $count = mysqli_num_rows($ret);
+   }
+   else {
+	   echo "userTBL 데이터 조회 실패!!!"."<br>";
+	   echo "실패 원인 :".mysqli_error($con);
+	   exit();
+   } 
+   
+   echo "<h1> 회원 조회 결과 </h1>";
+   echo "<TABLE border=1>";
+   echo "<TR>";
+   echo "<TH>아이디</TH><TH>이름</TH><TH>출생년도</TH><TH>지역</TH><TH>극번</TH>";
+   echo "<TH>전화번호</TH><TH>키</TH><TH>가입일</TH><TH>수정</TH><TH>삭제</TH>";
+   echo "</TR>";
+   
+   while($row = mysqli_fetch_array($ret)) {
+	  echo "<TR>";
+	  echo "<TD>", $row['userID'], "</TD>";
+	  echo "<TD>", $row['name'], "</TD>";
+	  echo "<TD>", $row['birthYear'], "</TD>";
+	  echo "<TD>", $row['addr'], "</TD>";
+	  echo "<TD>", $row['mobile1'], "</TD>";
+	  echo "<TD>", $row['mobile2'], "</TD>";
+	  echo "<TD>", $row['height'], "</TD>";
+	  echo "<TD>", $row['mDATE'], "</TD>";
+	  echo "<TD>", "<a href='update.php?userID=", $row['userID'], "'>수정</a></TD>";
+	  echo "<TD>", "<a href='delete.php?userID=", $row['userID'], "'>삭제</a></TD>";
+	  echo "</TR>";	  
+   }   
+   mysqli_close($con);
+   echo "</TABLE>"; 
+   echo "<br> <a href='main.html'> <--초기 화면</a> ";
+?>
+
+
+=======insert.php==================================================================
+
+<HTML>
+<HEAD>
+<META http-equiv="content-type" content="text/html; charset=utf-8">
+</HEAD>
+<BODY>
+
+<h1> 신규 회원 입력 </h1>
+<FORM METHOD="post"  ACTION="insert_result.php">
+	아이디 : <INPUT TYPE ="text" NAME="userID"> <br>
+	이름 : <INPUT TYPE ="text" NAME="name"> <br> 
+	출생년도 : <INPUT TYPE ="text" NAME="birthYear"> <br>
+	지역 : <INPUT TYPE ="text" NAME="addr"> <br>
+	휴대폰 국번 : <INPUT TYPE ="text" NAME="mobile1"> <br>
+	휴대폰 전화번호 : <INPUT TYPE ="text" NAME="mobile2"> <br>
+	신장 : <INPUT TYPE ="text" NAME="height"><br>
+	<BR><BR>
+	<INPUT TYPE="submit"  VALUE="회원 입력">
+</FORM>
+
+</BODY>
+</HTML>
+
+=======insert_result.php===========================================================
+
+<?php
+   $con=mysqli_connect("localhost", "user1", "p@ssw0rd", "sqlDB") or die("MySQL 접속 실패 !!");
+   mysqli_query($con, "set session character_set_connection=utf8mb4;");
+   mysqli_query($con, "set session character_set_results=utf8mb4;");
+   mysqli_query($con, "set session character_set_client=utf8mb4;");
+   $sql ="SELECT * FROM userTBL";
+   $userID = $_POST["userID"];
+   $name = $_POST["name"];
+   $birthYear = $_POST["birthYear"];
+   $addr = $_POST["addr"];
+   $mobile1 = $_POST["mobile1"];
+   $mobile2 = $_POST["mobile2"];
+   $height = $_POST["height"];   
+   $mDate = date("Y-m-j");
+   
+   $sql =" INSERT INTO userTBL VALUES('".$userID."','".$name."',".$birthYear;
+   $sql = $sql.",'".$addr."','".$mobile1."','".$mobile2."',".$height.",'".$mDate."')";
+   
+   $ret = mysqli_query($con, $sql);
+ 
+    echo "<h1> 신규 회원 입력 결과 </h1>";
+   if($ret) {
+	   echo "데이터가 성공적으로 입력됨.";
+   }
+   else {
+	   echo "데이터 입력 실패!!!"."<br>";
+	   echo "실패 원인 :".mysqli_error($con);
+   } 
+   mysqli_close($con);
+   
+   echo "<br> <a href='main.html'> <--초기 화면</a> ";
+?>
+
+
+========update.php=================================================================
+
+
+<?php
+   $con=mysqli_connect("localhost", "user1", "p@ssw0rd", "sqlDB") or die("MySQL 접속 실패 !!");
+   mysqli_query($con, "set session character_set_connection=utf8mb4;");
+   mysqli_query($con, "set session character_set_results=utf8mb4;");
+   mysqli_query($con, "set session character_set_client=utf8mb4;");
+   $sql ="SELECT * FROM userTBL WHERE userID='".$_GET['userID']."'";
+
+   $ret = mysqli_query($con, $sql);   
+   if($ret) {
+	   $count = mysqli_num_rows($ret);
+	   if ($count==0) {
+		   echo $_GET['userID']." 아이디의 회원이 없음!!!"."<br>";
+		   echo "<br> <a href='main.html'> <--초기 화면</a> ";
+		   exit();	
+	   }		   
+   }
+   else {
+	   echo "데이터 조회 실패!!!"."<br>";
+	   echo "실패 원인 :".mysqli_error($con);
+	   echo "<br> <a href='main.html'> <--초기 화면</a> ";
+	   exit();
+   }   
+   $row = mysqli_fetch_array($ret);
+   $userID = $row['userID'];
+   $name = $row["name"];
+   $birthYear = $row["birthYear"];
+   $addr = $row["addr"];
+   $mobile1 = $row["mobile1"];
+   $mobile2 = $row["mobile2"];
+   $height = $row["height"];   
+   $mDATE = $row["mDATE"];      
+?>
+
+<HTML>
+<HEAD>
+<META http-equiv="content-type" content="text/html; charset=utf-8">
+</HEAD>
+<BODY>
+
+<h1> 회원 정보 수정 </h1>
+<FORM METHOD="post"  ACTION="update_result.php">
+	아이디 : <INPUT TYPE ="text" NAME="userID" VALUE="<?php echo $userID ?>" READONLY> <br>
+	이름 : <INPUT TYPE ="text" NAME="name" VALUE=<?php echo $name ?>> <br> 
+	출생년도 : <INPUT TYPE ="text" NAME="birthYear" VALUE=<?php echo $birthYear ?>> <br>
+	지역 : <INPUT TYPE ="text" NAME="addr" VALUE=<?php echo $addr ?>> <br>
+	휴대폰 국번 : <INPUT TYPE ="text" NAME="mobile1" VALUE=<?php echo $mobile1 ?>> <br>
+	휴대폰 전화번호 : <INPUT TYPE ="text" NAME="mobile2" VALUE=<?php echo $mobile2 ?>> <br>
+	신장 : <INPUT TYPE ="text" NAME="height" VALUE=<?php echo $height ?>> <br>
+	회원가입일 : <INPUT TYPE ="date" NAME="mDATE" VALUE="<?php echo $mDATE ?>" READONLY><br>
+	<BR><BR>
+	<INPUT TYPE="submit"  VALUE="정보 수정">
+</FORM>
+
+</BODY>
+</HTML>
+
+==========update_result.php========================================================
+
+<?php
+   $con=mysqli_connect("localhost", "user1", "p@ssw0rd", "sqlDB") or die("MySQL 접속 실패 !!");
+   mysqli_query($con, "set session character_set_connection=utf8mb4;");
+   mysqli_query($con, "set session character_set_results=utf8mb4;");
+   mysqli_query($con, "set session character_set_client=utf8mb4;");
+   $userID = $_POST["userID"];
+   $name = $_POST["name"];
+   $birthYear = $_POST["birthYear"];
+   $addr = $_POST["addr"];
+   $mobile1 = $_POST["mobile1"];
+   $mobile2 = $_POST["mobile2"];
+   $height = $_POST["height"];   
+   $mDATE = $_POST["mDATE"]; 
+   
+   $sql ="UPDATE userTBL SET name='".$name."', birthYear=".$birthYear;
+   $sql = $sql.", addr='".$addr."', mobile1='".$mobile1."',mobile2='".$mobile2;
+   $sql = $sql."', height=".$height.", mDATE='".$mDATE."' WHERE userID='".$userID."'";
+   
+   $ret = mysqli_query($con, $sql);
+ 
+    echo "<h1> 회원 정보 수정 결과 </h1>";
+   if($ret) {
+	   echo "데이터가 성공적으로 수정됨.";
+   }
+   else {
+	   echo "데이터 수정 실패!!!"."<br>";
+	   echo "실패 원인 :".mysqli_error($con);
+   } 
+   mysqli_close($con);
+   
+   echo "<br> <a href='main.html'> <--초기 화면</a> ";
+?>
+
+
+========delete.php=================================================================
+
+<?php
+   $con=mysqli_connect("localhost", "root", "", "sqlDB") or die("MySQL 접속 실패 !!");
+   mysqli_query($con, "set session character_set_connection=utf8mb4;");
+   mysqli_query($con, "set session character_set_results=utf8mb4;");
+   mysqli_query($con, "set session character_set_client=utf8mb4;");
+   $sql ="SELECT * FROM userTBL WHERE userID='".$_GET['userID']."'";
+
+   $ret = mysqli_query($con, $sql);   
+   if($ret) {
+	   $count = mysqli_num_rows($ret);
+	   if ($count==0) {
+		   echo $_GET['userID']." 아이디의 회원이 없음!!!"."<br>";
+		   echo "<br> <a href='main.html'> <--초기 화면</a> ";
+		   exit();	
+	   }		   
+   }
+   else {
+	   echo "데이터 조회 실패!!!"."<br>";
+	   echo "실패 원인 :".mysqli_error($con);
+	   echo "<br> <a href='main.html'> <--초기 화면</a> ";
+	   exit();
+   }   
+   $row = mysqli_fetch_array($ret);
+   $userID = $row['userID'];
+   $name = $row["name"];
+   
+?>
+
+<HTML>
+<HEAD>
+<META http-equiv="content-type" content="text/html; charset=utf-8">
+</HEAD>
+<BODY>
+
+<h1> 회원 삭제 </h1>
+<FORM METHOD="post"  ACTION="delete_result.php">
+	아이디 : <INPUT TYPE ="text" NAME="userID" VALUE=<?php echo $userID ?> READONLY> <br>
+	이름 : <INPUT TYPE ="text" NAME="name" VALUE=<?php echo $name ?> READONLY> <br> 
+	<BR><BR>
+	위 회원을 삭제하겠습니까?	
+	<INPUT TYPE="submit"  VALUE="회원 삭제">
+</FORM>
+
+</BODY>
+</HTML>
+
+
+======delete_result.php============================================================
+
+<?php
+   $con=mysqli_connect("localhost", "user1", "p@ssw0rd", "sqlDB") or die("MySQL 접속 실패 !!");
+   mysqli_query($con, "set session character_set_connection=utf8mb4;");
+   mysqli_query($con, "set session character_set_results=utf8mb4;");
+   mysqli_query($con, "set session character_set_client=utf8mb4;");
+   $userID = $_POST["userID"];
+     
+   $sql ="DELETE FROM userTBL WHERE userID='".$userID."'";
+   
+   $ret = mysqli_query($con, $sql);
+ 
+    echo "<h1> 회원 삭제 결과 </h1>";
+   if($ret) {
+	   echo $userID." 회원이 성공적으로 삭제됨..";
+   }
+   else {
+	   echo "데이터 삭제 실패!!!"."<br>";
+	   echo "실패 원인 :".mysqli_error($con);
+   } 
+   mysqli_close($con);
+   
+   echo "<br><br> <a href='main.html'> <--초기 화면</a> ";
+?>
+
+
+
+
+
+
+
+
+
+
+

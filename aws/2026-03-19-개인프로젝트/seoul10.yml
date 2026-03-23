@@ -1,0 +1,901 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Seoul region stable base stack for hybrid project
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+
+  LatestAmiTd:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+
+  Tunnel1Psk:
+    Type: String
+    NoEcho: true
+    Default: cloudneta
+
+  Tunnel2Psk:
+    Type: String
+    NoEcho: true
+    Default: cloudneta
+
+  Tunnel1InsideCidr:
+    Type: String
+    Default: 169.254.178.132/30
+
+  Tunnel2InsideCidr:
+    Type: String
+    Default: 169.254.154.168/30
+
+  CgwBgpAsn:
+    Type: Number
+    Default: 65010
+
+Resources:
+
+# =========================
+# VPC
+# =========================
+  SeoulVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SeoulVPC
+
+  SeoulIDCVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.2.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SeoulIDCVPC
+
+# =========================
+# Internet Gateway
+# =========================
+  SeoulIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SeoulIGW
+
+  SeoulIDCIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SeoulIDCIGW
+
+  SeoulIGWAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SeoulVPC
+      InternetGatewayId: !Ref SeoulIGW
+
+  SeoulIDCIGWAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SeoulIDCVPC
+      InternetGatewayId: !Ref SeoulIDCIGW
+
+# =========================
+# DHCP Options
+# =========================
+  SeoulIDCdhcpOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: idcseoul.internal
+      DomainNameServers:
+        - 10.2.1.200
+        - 8.8.8.8
+      Tags:
+        - Key: Name
+          Value: Seoul-IDC-DHCPOptions
+
+  SeoulIDCdhcpAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      DhcpOptionsId: !Ref SeoulIDCdhcpOptions
+      VpcId: !Ref SeoulIDCVPC
+
+# =========================
+# Subnets (서울 6개)
+# =========================
+  SeoulPublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulVPC
+      CidrBlock: 10.1.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+  SeoulPublicSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulVPC
+      CidrBlock: 10.1.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [2, !GetAZs ""]
+
+  SeoulPrivateWebSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulVPC
+      CidrBlock: 10.1.3.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+  SeoulPrivateWebSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulVPC
+      CidrBlock: 10.1.4.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [2, !GetAZs ""]
+
+  SeoulAttachSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulVPC
+      CidrBlock: 10.1.10.0/28
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+  SeoulAttachSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulVPC
+      CidrBlock: 10.1.10.16/28
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [2, !GetAZs ""]
+
+# =========================
+# IDC Subnet (서울 IDC 1개)
+# =========================
+  SeoulIDCSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulIDCVPC
+      CidrBlock: 10.2.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+# =========================
+# Route Tables
+# =========================
+  SeoulPublicRTA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulVPC
+
+  SeoulPublicRTC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulVPC
+
+  SeoulPrivateWebRTA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulVPC
+
+  SeoulPrivateWebRTC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulVPC
+
+  SeoulAttachRTA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulVPC
+
+  SeoulAttachRTC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulVPC
+
+  SeoulIDCRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulIDCVPC
+
+  SeoulPublicRouteA:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulIGWAttach
+    Properties:
+      RouteTableId: !Ref SeoulPublicRTA
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SeoulIGW
+
+  SeoulPublicRouteC:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulIGWAttach
+    Properties:
+      RouteTableId: !Ref SeoulPublicRTC
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SeoulIGW
+
+  SeoulIDCDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulIDCIGWAttach
+    Properties:
+      RouteTableId: !Ref SeoulIDCRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SeoulIDCIGW
+
+  SeoulPublicSubnetAAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulPublicSubnetA
+      RouteTableId: !Ref SeoulPublicRTA
+
+  SeoulPublicSubnetCAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulPublicSubnetC
+      RouteTableId: !Ref SeoulPublicRTC
+
+  SeoulPrivateWebSubnetAAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulPrivateWebSubnetA
+      RouteTableId: !Ref SeoulPrivateWebRTA
+
+  SeoulPrivateWebSubnetCAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulPrivateWebSubnetC
+      RouteTableId: !Ref SeoulPrivateWebRTC
+
+  SeoulAttachSubnetAAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulAttachSubnetA
+      RouteTableId: !Ref SeoulAttachRTA
+
+  SeoulAttachSubnetCAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulAttachSubnetC
+      RouteTableId: !Ref SeoulAttachRTC
+
+  SeoulIDCSubnetAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulIDCSubnet
+      RouteTableId: !Ref SeoulIDCRT
+
+# =========================
+# Security Groups
+# =========================
+  SeoulALBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul ALB SG
+      VpcId: !Ref SeoulVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  SeoulWebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul Web SG
+      VpcId: !Ref SeoulVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref SeoulALBSG
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.2.0.0/16
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.2.0.0/16
+        - IpProtocol: -1
+          CidrIp: 10.2.0.0/16
+        - IpProtocol: -1
+          CidrIp: 10.3.0.0/16
+        - IpProtocol: -1
+          CidrIp: 10.4.0.0/16
+
+  SeoulNATSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul NAT SG
+      VpcId: !Ref SeoulVPC
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 10.1.0.0/16
+
+  SeoulResolverSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul Resolver SG
+      VpcId: !Ref SeoulVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.2.0.0/16
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.2.0.0/16
+
+  SeoulIDCDNSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul IDC DNS SG
+      VpcId: !Ref SeoulIDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  SeoulIDCDBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul IDC DB SG
+      VpcId: !Ref SeoulIDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.4.0.0/16
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  SeoulCGWSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul CGW SG
+      VpcId: !Ref SeoulIDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 500
+          ToPort: 500
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 4500
+          ToPort: 4500
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: 50
+          CidrIp: 0.0.0.0/0
+
+# =========================
+# NAT Instances
+# =========================
+  SeoulNATInstanceA:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestAmiTd
+      SourceDestCheck: false
+      SubnetId: !Ref SeoulPublicSubnetA
+      PrivateIpAddress: 10.1.1.10
+      SecurityGroupIds:
+        - !Ref SeoulNATSG
+      Tags:
+        - Key: Name
+          Value: SeoulNATInstanceA
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf -y update
+          dnf -y install iptables-services
+          echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/custom-ip-forwarding.conf
+          sysctl -p /etc/sysctl.d/custom-ip-forwarding.conf
+          iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+          service iptables save
+          systemctl enable iptables
+          systemctl restart iptables
+
+  SeoulNATInstanceC:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestAmiTd
+      SourceDestCheck: false
+      SubnetId: !Ref SeoulPublicSubnetC
+      PrivateIpAddress: 10.1.2.10
+      SecurityGroupIds:
+        - !Ref SeoulNATSG
+      Tags:
+        - Key: Name
+          Value: SeoulNATInstanceC
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf -y update
+          dnf -y install iptables-services
+          echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/custom-ip-forwarding.conf
+          sysctl -p /etc/sysctl.d/custom-ip-forwarding.conf
+          iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+          service iptables save
+          systemctl enable iptables
+          systemctl restart iptables
+
+  SeoulPrivateDefaultRouteA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref SeoulPrivateWebRTA
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref SeoulNATInstanceA
+
+  SeoulPrivateDefaultRouteC:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref SeoulPrivateWebRTC
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref SeoulNATInstanceC
+
+# =========================
+# Web Servers
+# =========================
+  SeoulWeb1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestAmiTd
+      SubnetId: !Ref SeoulPrivateWebSubnetA
+      PrivateIpAddress: 10.1.3.100
+      SecurityGroupIds:
+        - !Ref SeoulWebSG
+      Tags:
+        - Key: Name
+          Value: SeoulWeb1
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf -y update
+          dnf -y install httpd php php-mysqlnd
+          systemctl enable httpd
+          systemctl start httpd
+          echo 'root:qwe123' | chpasswd
+          sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          systemctl restart sshd
+          echo "<h1>Seoul Web1</h1>" > /var/www/html/index.html
+
+  SeoulWeb2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestAmiTd
+      SubnetId: !Ref SeoulPrivateWebSubnetC
+      PrivateIpAddress: 10.1.4.100
+      SecurityGroupIds:
+        - !Ref SeoulWebSG
+      Tags:
+        - Key: Name
+          Value: SeoulWeb2
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf -y update
+          dnf -y install httpd php php-mysqlnd
+          systemctl enable httpd
+          systemctl start httpd
+          echo 'root:qwe123' | chpasswd
+          sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          systemctl restart sshd
+          echo "<h1>Seoul Web2</h1>" > /var/www/html/index.html
+
+# =========================
+# ALB
+# =========================
+  SeoulALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: seoul-alb
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref SeoulALBSG
+      Subnets:
+        - !Ref SeoulPublicSubnetA
+        - !Ref SeoulPublicSubnetC
+
+  SeoulTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: seoul-tg
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref SeoulVPC
+      TargetType: instance
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      Targets:
+        - Id: !Ref SeoulWeb1
+          Port: 80
+        - Id: !Ref SeoulWeb2
+          Port: 80
+
+  SeoulALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref SeoulALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref SeoulTargetGroup
+
+# =========================
+# Route53
+# =========================
+  SeoulPrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: awsseoul.internal
+      VPCs:
+        - VPCId: !Ref SeoulVPC
+          VPCRegion: !Ref AWS::Region
+
+  SeoulWebRecord1:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref SeoulPrivateHostedZone
+      Name: websvr1.awsseoul.internal
+      Type: A
+      TTL: 60
+      ResourceRecords:
+        - 10.1.3.100
+
+  SeoulWebRecord2:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref SeoulPrivateHostedZone
+      Name: websvr2.awsseoul.internal
+      Type: A
+      TTL: 60
+      ResourceRecords:
+        - 10.1.4.100
+
+  SeoulInboundEP:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: INBOUND
+      IpAddresses:
+        - Ip: 10.1.3.250
+          SubnetId: !Ref SeoulPrivateWebSubnetA
+        - Ip: 10.1.4.250
+          SubnetId: !Ref SeoulPrivateWebSubnetC
+      SecurityGroupIds:
+        - !Ref SeoulResolverSG
+
+  SeoulOutboundEP:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: OUTBOUND
+      IpAddresses:
+        - Ip: 10.1.3.251
+          SubnetId: !Ref SeoulPrivateWebSubnetA
+        - Ip: 10.1.4.251
+          SubnetId: !Ref SeoulPrivateWebSubnetC
+      SecurityGroupIds:
+        - !Ref SeoulResolverSG
+
+  SeoulForwardRuleToIDC:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: idcseoul.internal
+      Name: seoul-forward-idc
+      ResolverEndpointId: !Ref SeoulOutboundEP
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: 10.2.1.200
+          Port: 53
+
+  SeoulForwardRuleAssocIDC:
+    Type: AWS::Route53Resolver::ResolverRuleAssociation
+    Properties:
+      Name: seoul-forward-idc-assoc
+      ResolverRuleId: !Ref SeoulForwardRuleToIDC
+      VPCId: !Ref SeoulVPC
+
+# =========================
+# IDC Instances (수동 설정용)
+# =========================
+  SeoulIDCDNSSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestAmiTd
+      SubnetId: !Ref SeoulIDCSubnet
+      PrivateIpAddress: 10.2.1.200
+      SecurityGroupIds:
+        - !Ref SeoulIDCDNSSG
+      Tags:
+        - Key: Name
+          Value: SeoulIDCDNSSRV
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          echo 'root:qwe123' | chpasswd
+          sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          systemctl restart sshd
+
+  SeoulIDCDBSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestAmiTd
+      SubnetId: !Ref SeoulIDCSubnet
+      PrivateIpAddress: 10.2.1.100
+      SecurityGroupIds:
+        - !Ref SeoulIDCDBSG
+      Tags:
+        - Key: Name
+          Value: SeoulIDCDBSRV
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          echo 'root:qwe123' | chpasswd
+          sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          systemctl restart sshd
+
+  SeoulIDCCGW:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      KeyName: !Ref KeyName
+      ImageId: ami-06b18c6a9a323f75f
+      SubnetId: !Ref SeoulIDCSubnet
+      PrivateIpAddress: 10.2.1.10
+      SourceDestCheck: false
+      SecurityGroupIds:
+        - !Ref SeoulCGWSG
+      Tags:
+        - Key: Name
+          Value: SeoulIDCCGW
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+          sysctl -p
+
+  SeoulCGWEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  SeoulCGWEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    DependsOn: SeoulIDCCGW
+    Properties:
+      AllocationId: !GetAtt SeoulCGWEIP.AllocationId
+      InstanceId: !Ref SeoulIDCCGW
+
+# =========================
+# TGW / VPN
+# =========================
+  SeoulTGW:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      DefaultRouteTableAssociation: enable
+      DefaultRouteTablePropagation: enable
+      DnsSupport: enable
+      VpnEcmpSupport: enable
+      AmazonSideAsn: 64512
+      Tags:
+        - Key: Name
+          Value: SeoulTGW
+
+  SeoulTGWAttachment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref SeoulTGW
+      VpcId: !Ref SeoulVPC
+      SubnetIds:
+        - !Ref SeoulAttachSubnetA
+        - !Ref SeoulAttachSubnetC
+
+  SeoulCustomerGateway:
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      BgpAsn: !Ref CgwBgpAsn
+      IpAddress: !Ref SeoulCGWEIP
+      Type: ipsec.1
+
+  SeoulVPNConnection:
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      Type: ipsec.1
+      TransitGatewayId: !Ref SeoulTGW
+      CustomerGatewayId: !Ref SeoulCustomerGateway
+      VpnTunnelOptionsSpecifications:
+        - PreSharedKey: !Ref Tunnel1Psk
+          TunnelInsideCidr: !Ref Tunnel1InsideCidr
+        - PreSharedKey: !Ref Tunnel2Psk
+          TunnelInsideCidr: !Ref Tunnel2InsideCidr
+
+# =========================
+# VPC / IDC Routes
+# =========================
+  SeoulWebRouteToIDCFromA:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulTGWAttachment
+    Properties:
+      RouteTableId: !Ref SeoulPrivateWebRTA
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayId: !Ref SeoulTGW
+
+  SeoulWebRouteToIDCFromC:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulTGWAttachment
+    Properties:
+      RouteTableId: !Ref SeoulPrivateWebRTC
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayId: !Ref SeoulTGW
+
+  SeoulWebRouteToAWSSingaporeFromA:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulTGWAttachment
+    Properties:
+      RouteTableId: !Ref SeoulPrivateWebRTA
+      DestinationCidrBlock: 10.3.0.0/16
+      TransitGatewayId: !Ref SeoulTGW
+
+  SeoulWebRouteToAWSSingaporeFromC:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulTGWAttachment
+    Properties:
+      RouteTableId: !Ref SeoulPrivateWebRTC
+      DestinationCidrBlock: 10.3.0.0/16
+      TransitGatewayId: !Ref SeoulTGW
+
+  SeoulWebRouteToIDCSingaporeFromA:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulTGWAttachment
+    Properties:
+      RouteTableId: !Ref SeoulPrivateWebRTA
+      DestinationCidrBlock: 10.4.0.0/16
+      TransitGatewayId: !Ref SeoulTGW
+
+  SeoulWebRouteToIDCSingaporeFromC:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulTGWAttachment
+    Properties:
+      RouteTableId: !Ref SeoulPrivateWebRTC
+      DestinationCidrBlock: 10.4.0.0/16
+      TransitGatewayId: !Ref SeoulTGW
+
+  SeoulIDCRouteToAWS:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref SeoulIDCRT
+      DestinationCidrBlock: 10.1.0.0/16
+      InstanceId: !Ref SeoulIDCCGW
+
+  SeoulIDCRouteToAWSSingapore:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref SeoulIDCRT
+      DestinationCidrBlock: 10.3.0.0/16
+      InstanceId: !Ref SeoulIDCCGW
+
+  SeoulIDCRouteToIDCSingapore:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref SeoulIDCRT
+      DestinationCidrBlock: 10.4.0.0/16
+      InstanceId: !Ref SeoulIDCCGW
+
+# =========================
+# TGW Peering (나중에 직접 추가/업데이트)
+# 아래는 예시 주석
+# =========================
+#  SeoulSingaporePeering:
+#    Type: AWS::EC2::TransitGatewayPeeringAttachment
+#    Properties:
+#      PeerAccountId: "계정ID"
+#      PeerRegion: ap-southeast-1
+#      PeerTransitGatewayId: tgw-xxxxxxxx
+#      TransitGatewayId: !Ref SeoulTGW
+#
+# 수락 후 TGW Route Table에 다음 정적 경로 추가
+# - 10.3.0.0/16 -> peering attachment
+# - 10.4.0.0/16 -> peering attachment
+
+# =========================
+# Cross-region Resolver Rule (나중에 추가)
+# =========================
+#  SeoulForwardRuleToAWSSingapore:
+#    Type: AWS::Route53Resolver::ResolverRule
+#    Properties:
+#      DomainName: awssingapore.internal
+#      Name: seoul-forward-aws-singapore
+#      ResolverEndpointId: !Ref SeoulOutboundEP
+#      RuleType: FORWARD
+#      TargetIps:
+#        - Ip: 10.3.3.250
+#          Port: 53
+#        - Ip: 10.3.4.250
+#          Port: 53
+#
+#  SeoulForwardRuleToIDCSingapore:
+#    Type: AWS::Route53Resolver::ResolverRule
+#    Properties:
+#      DomainName: idcsingapore.internal
+#      Name: seoul-forward-idc-singapore
+#      ResolverEndpointId: !Ref SeoulOutboundEP
+#      RuleType: FORWARD
+#      TargetIps:
+#        - Ip: 10.4.1.200
+#          Port: 53
+
+Outputs:
+  SeoulTGWId:
+    Value: !Ref SeoulTGW
+
+  SeoulALBDNS:
+    Value: !GetAtt SeoulALB.DNSName
+
+  SeoulCGWPublicIP:
+    Value: !Ref SeoulCGWEIP
+
+  SeoulIDCDNSPublicIP:
+    Value: !GetAtt SeoulIDCDNSSRV.PublicIp
+
+  SeoulIDCDBPublicIP:
+    Value: !GetAtt SeoulIDCDBSRV.PublicIp

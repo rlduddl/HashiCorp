@@ -1,0 +1,404 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Seoul setup stack for DB/PHP/crontab work before TGW, VPN, and GA
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  LatestAmiTd:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Mappings:
+  RegionMap:
+    ap-northeast-2:
+      AZ1: ap-northeast-2a
+      AZ2: ap-northeast-2c
+
+Resources:
+
+# =========================
+# AWS Seoul VPC
+# =========================
+  SeoulVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.1.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SeoulVPC-Setup
+
+  SeoulIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SeoulIGW-Setup
+
+  SeoulAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SeoulVPC
+      InternetGatewayId: !Ref SeoulIGW
+
+# =========================
+# IDC Seoul VPC
+# =========================
+  SeoulIDCVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.2.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SeoulIDCVPC-Setup
+
+  SeoulIDCIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SeoulIDCIGW-Setup
+
+  SeoulIDCAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SeoulIDCVPC
+      InternetGatewayId: !Ref SeoulIDCIGW
+
+# =========================
+# DHCP Option (IDC)
+# =========================
+  SeoulIDCdhcpOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: idcseoul.internal
+      DomainNameServers:
+        - 10.2.1.200
+        - 8.8.8.8
+      NtpServers:
+        - 203.248.240.140
+        - 168.126.3.6
+      Tags:
+        - Key: Name
+          Value: Seoul-IDC-DHCPOptions-Setup
+
+  SeoulIDCdhcpAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      DhcpOptionsId: !Ref SeoulIDCdhcpOptions
+      VpcId: !Ref SeoulIDCVPC
+
+# =========================
+# Subnets
+# - 설정 편의상 웹도 퍼블릭 서브넷에 올림
+# =========================
+  SeoulWebSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulVPC
+      CidrBlock: 10.1.3.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ1]
+      Tags:
+        - Key: Name
+          Value: SeoulWebSubnetA-Setup
+
+  SeoulWebSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulVPC
+      CidrBlock: 10.1.4.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ2]
+      Tags:
+        - Key: Name
+          Value: SeoulWebSubnetC-Setup
+
+  SeoulIDCSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SeoulIDCVPC
+      CidrBlock: 10.2.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ1]
+      Tags:
+        - Key: Name
+          Value: SeoulIDCSubnet-Setup
+
+# =========================
+# Route Tables
+# =========================
+  SeoulPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulVPC
+      Tags:
+        - Key: Name
+          Value: SeoulPublicRT-Setup
+
+  SeoulPublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulAttachGateway
+    Properties:
+      RouteTableId: !Ref SeoulPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SeoulIGW
+
+  SeoulWebSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulWebSubnetA
+      RouteTableId: !Ref SeoulPublicRT
+
+  SeoulWebSubnetCAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulWebSubnetC
+      RouteTableId: !Ref SeoulPublicRT
+
+  SeoulIDCRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SeoulIDCVPC
+      Tags:
+        - Key: Name
+          Value: SeoulIDCRT-Setup
+
+  SeoulIDCDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulIDCAttachGateway
+    Properties:
+      RouteTableId: !Ref SeoulIDCRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SeoulIDCIGW
+
+  SeoulIDCSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SeoulIDCSubnet
+      RouteTableId: !Ref SeoulIDCRT
+
+# =========================
+# VPC Peering
+# - 설정 단계에서는 TGW/VPN 대신 Peering으로 웹↔IDC 통신만 확보
+# =========================
+  SeoulVpcPeering:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref SeoulVPC
+      PeerVpcId: !Ref SeoulIDCVPC
+      Tags:
+        - Key: Name
+          Value: Seoul-Web-IDC-Peering-Setup
+
+  SeoulToIDCPrivateRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulVpcPeering
+    Properties:
+      RouteTableId: !Ref SeoulPublicRT
+      DestinationCidrBlock: 10.2.0.0/16
+      VpcPeeringConnectionId: !Ref SeoulVpcPeering
+
+  IDCToSeoulPrivateRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SeoulVpcPeering
+    Properties:
+      RouteTableId: !Ref SeoulIDCRT
+      DestinationCidrBlock: 10.1.0.0/16
+      VpcPeeringConnectionId: !Ref SeoulVpcPeering
+
+# =========================
+# Security Groups
+# =========================
+  SeoulWebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul Web SG for setup
+      VpcId: !Ref SeoulVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SeoulWebSG-Setup
+
+  SeoulIDCDNSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul IDC DNS SG for setup
+      VpcId: !Ref SeoulIDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.1.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SeoulIDCDNSSG-Setup
+
+  SeoulIDCDBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Seoul IDC DB SG for setup
+      VpcId: !Ref SeoulIDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.1.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SeoulIDCDBSG-Setup
+
+# =========================
+# EC2 Instances
+# =========================
+  AWSWEBSVR1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SeoulWebSubnetA
+      SecurityGroupIds:
+        - !Ref SeoulWebSG
+      PrivateIpAddress: 10.1.3.100
+      Tags:
+        - Key: Name
+          Value: AWSWEBSVR1-Setup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          hostnamectl set-hostname awswebsvr1
+          dnf -y update
+          echo "AWSWEBSVR1 Setup" > /etc/motd
+
+  AWSWEBSVR2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SeoulWebSubnetC
+      SecurityGroupIds:
+        - !Ref SeoulWebSG
+      PrivateIpAddress: 10.1.4.100
+      Tags:
+        - Key: Name
+          Value: AWSWEBSVR2-Setup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          hostnamectl set-hostname awswebsvr2
+          dnf -y update
+          echo "AWSWEBSVR2 Setup" > /etc/motd
+
+  IDCDNSSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SeoulIDCSubnet
+      SecurityGroupIds:
+        - !Ref SeoulIDCDNSSG
+      PrivateIpAddress: 10.2.1.200
+      Tags:
+        - Key: Name
+          Value: IDCDNSSRV-Setup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          hostnamectl set-hostname dnssvr
+          dnf -y update
+          echo "IDCDNSSRV Setup" > /etc/motd
+
+  IDCDBSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SeoulIDCSubnet
+      SecurityGroupIds:
+        - !Ref SeoulIDCDBSG
+      PrivateIpAddress: 10.2.1.100
+      Tags:
+        - Key: Name
+          Value: IDCDBSRV-Setup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          hostnamectl set-hostname dbsvr
+          dnf -y update
+          echo "IDCDBSRV Setup" > /etc/motd
+
+Outputs:
+  AWSWEBSVR1PublicIP:
+    Value: !GetAtt AWSWEBSVR1.PublicIp
+
+  AWSWEBSVR2PublicIP:
+    Value: !GetAtt AWSWEBSVR2.PublicIp
+
+  IDCDNSSRVPublicIP:
+    Value: !GetAtt IDCDNSSRV.PublicIp
+
+  IDCDBSRVPublicIP:
+    Value: !GetAtt IDCDBSRV.PublicIp
+
+  AWSWEBSVR1PrivateIP:
+    Value: 10.1.3.100
+
+  AWSWEBSVR2PrivateIP:
+    Value: 10.1.4.100
+
+  IDCDNSSRVPrivateIP:
+    Value: 10.2.1.200
+
+  IDCDBSRVPrivateIP:
+    Value: 10.2.1.100

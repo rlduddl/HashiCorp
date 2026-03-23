@@ -1,0 +1,1070 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  LatestAmiTd:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+
+  Tunnel1Psk:
+    Type: String
+    NoEcho: true
+    Default: cloudneta123!
+
+  Tunnel2Psk:
+    Type: String
+    NoEcho: true
+    Default: cloudneta456!
+
+  Tunnel1InsideCidr:
+    Type: String
+    Default: 169.254.21.0/30
+
+  Tunnel2InsideCidr:
+    Type: String
+    Default: 169.254.22.0/30
+
+  CgwBgpAsn:
+    Type: Number
+    Default: 65020
+
+  MysqlRootPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  MysqlReplUser:
+    Type: String
+    Default: repluser
+
+  MysqlReplPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+
+
+
+
+
+Mappings:
+  RegionMap:
+    ap-southeast-1:
+      AZ1: ap-southeast-1a
+      AZ2: ap-southeast-1c
+
+Resources:
+
+# =========================
+# AWS Singapore VPC
+# =========================
+  SingaporeVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.3.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SingaporeVPC
+
+  SingaporeIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SingaporeIGW
+
+  SingaporeAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      InternetGatewayId: !Ref SingaporeIGW
+
+# =========================
+# IDC Singapore VPC (On-Prem Simulated)
+# =========================
+  SingaporeIDCVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.4.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: SingaporeIDCVPC
+
+  SingaporeIDCIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SingaporeIDCIGW
+
+  SingaporeIDCAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SingaporeIDCVPC
+      InternetGatewayId: !Ref SingaporeIDCIGW
+
+# =========================
+# DHCP Option (IDC)
+# =========================
+  SingaporeIDCdhcpOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: idcsingapore.internal
+      DomainNameServers:
+        - 10.4.1.200
+        - 8.8.8.8
+      NtpServers:
+        - 203.248.240.140
+        - 168.126.3.6
+      Tags:
+        - Key: Name
+          Value: Singapore-IDC-DHCPOptions
+
+  SingaporeIDCdhcpAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      DhcpOptionsId: !Ref SingaporeIDCdhcpOptions
+      VpcId: !Ref SingaporeIDCVPC
+
+# =========================
+# AWS Subnets (5)
+# =========================
+  SingaporePublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      CidrBlock: 10.3.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ1]
+      Tags:
+        - Key: Name
+          Value: SingaporePublicSubnetA
+
+  SingaporePrivateWebSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      CidrBlock: 10.3.3.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ1]
+      Tags:
+        - Key: Name
+          Value: SingaporePrivateWebSubnetA
+
+  SingaporePrivateWebSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      CidrBlock: 10.3.4.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ2]
+      Tags:
+        - Key: Name
+          Value: SingaporePrivateWebSubnetC
+
+  SingaporeTGWSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      CidrBlock: 10.3.10.0/28
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ1]
+      Tags:
+        - Key: Name
+          Value: SingaporeTGWSubnetA
+
+  SingaporeTGWSubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      CidrBlock: 10.3.10.16/28
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ2]
+      Tags:
+        - Key: Name
+          Value: SingaporeTGWSubnetC
+
+# =========================
+# IDC Subnet (1)
+# =========================
+  SingaporeIDCSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeIDCVPC
+      CidrBlock: 10.4.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !FindInMap [RegionMap, !Ref AWS::Region, AZ1]
+      Tags:
+        - Key: Name
+          Value: SingaporeIDCSubnet
+
+# =========================
+# Route Tables - AWS
+# =========================
+  SingaporePublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: SingaporePublicRT
+
+  SingaporePrivateWebRTA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: SingaporePrivateWebRTA
+
+  SingaporePrivateWebRTC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: SingaporePrivateWebRTC
+
+  SingaporeTGWRTA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: SingaporeTGWRTA
+
+  SingaporeTGWRTC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: SingaporeTGWRTC
+
+  SingaporePublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeAttachGateway
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SingaporeIGW
+
+  SingaporePublicSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SingaporePublicSubnetA
+      RouteTableId: !Ref SingaporePublicRT
+
+  SingaporePrivateWebSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SingaporePrivateWebSubnetA
+      RouteTableId: !Ref SingaporePrivateWebRTA
+
+  SingaporePrivateWebSubnetCAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SingaporePrivateWebSubnetC
+      RouteTableId: !Ref SingaporePrivateWebRTC
+
+  SingaporeTGWSubnetAAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SingaporeTGWSubnetA
+      RouteTableId: !Ref SingaporeTGWRTA
+
+  SingaporeTGWSubnetCAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SingaporeTGWSubnetC
+      RouteTableId: !Ref SingaporeTGWRTC
+
+# =========================
+# Route Tables - IDC
+# =========================
+  SingaporeIDCRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeIDCVPC
+      Tags:
+        - Key: Name
+          Value: SingaporeIDCRT
+
+  SingaporeIDCDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeIDCAttachGateway
+    Properties:
+      RouteTableId: !Ref SingaporeIDCRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SingaporeIDCIGW
+
+  SingaporeIDCSubnetAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SingaporeIDCSubnet
+      RouteTableId: !Ref SingaporeIDCRT
+
+# =========================
+# Security Groups
+# =========================
+  SingaporeWebSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Singapore Web SG
+      VpcId: !Ref SingaporeVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.3.0.0/16
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.3.0.0/16
+        - IpProtocol: -1
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: -1
+          CidrIp: 10.2.0.0/16
+        - IpProtocol: -1
+          CidrIp: 10.4.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SingaporeWebSG
+
+  SingaporeResolverSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Singapore Resolver SG
+      VpcId: !Ref SingaporeVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.1.0.0/16
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.2.0.0/16
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.2.0.0/16
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.3.0.0/16
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.3.0.0/16
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.4.0.0/16
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.4.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SingaporeResolverSG
+
+  SingaporeIDCDNSSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Singapore IDC DNS SG
+      VpcId: !Ref SingaporeIDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SingaporeIDCDNSSG
+
+  SingaporeIDCDBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Singapore IDC DB SG
+      VpcId: !Ref SingaporeIDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.3.0.0/16
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SingaporeIDCDBSG
+
+  SingaporeCGWSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Singapore CGW SG
+      VpcId: !Ref SingaporeIDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 500
+          ToPort: 500
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 4500
+          ToPort: 4500
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: 50
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          CidrIp: 10.4.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: SingaporeCGWSG
+
+# =========================
+# NAT Instance (single public subnet)
+# =========================
+  SingaporeNATInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SourceDestCheck: false
+      SubnetId: !Ref SingaporePublicSubnetA
+      SecurityGroupIds:
+        - !Ref SingaporeWebSG
+      PrivateIpAddress: 10.3.1.10
+      Tags:
+        - Key: Name
+          Value: SingaporeNATInstance
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf -y update
+          dnf -y install iptables-services
+          echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/custom-ip-forwarding.conf
+          sysctl -p /etc/sysctl.d/custom-ip-forwarding.conf
+          iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+          service iptables save
+          systemctl enable iptables
+          systemctl restart iptables
+
+  SingaporePrivateDefaultRouteA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref SingaporePrivateWebRTA
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref SingaporeNATInstance
+
+  SingaporePrivateDefaultRouteC:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref SingaporePrivateWebRTC
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref SingaporeNATInstance
+
+# =========================
+# AWS Web EC2 (single service endpoint)
+# =========================
+  AWSSINGAPOREWEBSVR1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SingaporePrivateWebSubnetA
+      SecurityGroupIds:
+        - !Ref SingaporeWebSG
+      PrivateIpAddress: 10.3.3.100
+      Tags:
+        - Key: Name
+          Value: AWSSINGAPOREWEBSVR1
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          exec > >(tee -a /var/log/userdata.log) 2>&1
+          set -eux
+          hostnamectl set-hostname awssingaporewebsvr1
+          dnf -y update
+          dnf -y install httpd php php-mysqlnd
+          systemctl enable httpd
+          systemctl start httpd
+
+          echo 'root:qwe123' | chpasswd
+          sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          sed -i 's/^PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+          systemctl restart sshd
+
+          cat > /var/www/html/index.html <<'EOF'
+          <html><body><h1>Singapore Web1</h1><p>10.3.3.100</p></body></html>
+          EOF
+
+# =========================
+# Private Hosted Zone + Records
+# =========================
+  SingaporePrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    DependsOn: SingaporeVPC
+    Properties:
+      HostedZoneConfig:
+        Comment: Private hosted zone for awssingapore.internal
+      Name: awssingapore.internal
+      VPCs:
+        - VPCId: !Ref SingaporeVPC
+          VPCRegion: !Ref AWS::Region
+      HostedZoneTags:
+        - Key: Name
+          Value: awssingapore-private-zone
+
+  SingaporeWebRecord1:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref SingaporePrivateHostedZone
+      Comment: DNS record for Singapore Web Server 1
+      Name: websvr1.awssingapore.internal
+      Type: A
+      TTL: 60
+      ResourceRecords:
+        - 10.3.3.100
+
+# =========================
+# Route53 Resolver
+# =========================
+  SingaporeInboundEP:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: INBOUND
+      IpAddresses:
+        - Ip: 10.3.3.250
+          SubnetId: !Ref SingaporePrivateWebSubnetA
+        - Ip: 10.3.4.250
+          SubnetId: !Ref SingaporePrivateWebSubnetC
+      SecurityGroupIds:
+        - !Ref SingaporeResolverSG
+      Tags:
+        - Key: Name
+          Value: singapore-idc-to-aws-inbound
+
+  SingaporeOutboundEP:
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: OUTBOUND
+      IpAddresses:
+        - Ip: 10.3.3.251
+          SubnetId: !Ref SingaporePrivateWebSubnetA
+        - Ip: 10.3.4.251
+          SubnetId: !Ref SingaporePrivateWebSubnetC
+      SecurityGroupIds:
+        - !Ref SingaporeResolverSG
+      Tags:
+        - Key: Name
+          Value: singapore-aws-to-others-outbound
+
+  ForwardRuleToAWSSeoul:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: awsseoul.internal
+      Name: Forward-To-AWSSeoul
+      ResolverEndpointId: !Ref SingaporeOutboundEP
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: 10.1.3.250
+          Port: 53
+        - Ip: 10.1.4.250
+          Port: 53
+
+  ForwardRuleAssocAWSSeoul:
+    Type: AWS::Route53Resolver::ResolverRuleAssociation
+    Properties:
+      Name: Assoc-Forward-To-AWSSeoul
+      ResolverRuleId: !Ref ForwardRuleToAWSSeoul
+      VPCId: !Ref SingaporeVPC
+
+  ForwardRuleToIDCSeoul:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: idcseoul.internal
+      Name: Forward-To-IDCSeoul
+      ResolverEndpointId: !Ref SingaporeOutboundEP
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: 10.2.1.200
+          Port: 53
+
+  ForwardRuleAssocIDCSeoul:
+    Type: AWS::Route53Resolver::ResolverRuleAssociation
+    Properties:
+      Name: Assoc-Forward-To-IDCSeoul
+      ResolverRuleId: !Ref ForwardRuleToIDCSeoul
+      VPCId: !Ref SingaporeVPC
+
+  ForwardRuleToIDCSingapore:
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: idcsingapore.internal
+      Name: Forward-To-IDCSingapore
+      ResolverEndpointId: !Ref SingaporeOutboundEP
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: 10.4.1.200
+          Port: 53
+
+  ForwardRuleAssocIDCSingapore:
+    Type: AWS::Route53Resolver::ResolverRuleAssociation
+    Properties:
+      Name: Assoc-Forward-To-IDCSingapore
+      ResolverRuleId: !Ref ForwardRuleToIDCSingapore
+      VPCId: !Ref SingaporeVPC
+
+# =========================
+# IDC DNS / DB / CGW
+# =========================
+  SINGAPOREIDCDNSSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SingaporeIDCSubnet
+      SecurityGroupIds:
+        - !Ref SingaporeIDCDNSSG
+      PrivateIpAddress: 10.4.1.200
+      Tags:
+        - Key: Name
+          Value: SINGAPOREIDCDNSSRV
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          hostnamectl --static set-hostname DNSSRV
+          dnf -y install bind bind-utils bind-libs
+          sed -i "s/listen-on port 53 { 127.0.0.1; }/listen-on port 53 { any; }/g" /etc/named.conf
+          sed -i "s/allow-query     { localhost; }/allow-query     { any; }/g" /etc/named.conf
+          sed -i "s/dnssec-validation yes/dnssec-validation no/g" /etc/named.conf || true
+
+          cat <<EOF >> /etc/named.rfc1912.zones
+          zone "idcsingapore.internal" {
+              type master;
+              file "/var/named/db.idcsingapore.internal";
+              allow-update { none; };
+          };
+
+          zone "awssingapore.internal" {
+              type forward;
+              forward only;
+              forwarders { 10.3.3.250; 10.3.4.250; };
+          };
+
+          zone "awsseoul.internal" {
+              type forward;
+              forward only;
+              forwarders { 10.1.3.250; 10.1.4.250; };
+          };
+
+          zone "idcseoul.internal" {
+              type forward;
+              forward only;
+              forwarders { 10.2.1.200; };
+          };
+          EOF
+
+          cat <<EOF > /var/named/db.idcsingapore.internal
+          \$TTL 300
+          @   IN  SOA idcsingapore.internal. root.idcsingapore.internal. (
+                  2026031901
+                  3600
+                  900
+                  604800
+                  86400
+          )
+          @           IN  NS  ns1.idcsingapore.internal.
+          ns1         IN  A   10.4.1.200
+          dnssvr      IN  A   10.4.1.200
+          dbsvr       IN  A   10.4.1.100
+          cgw         IN  A   10.4.1.10
+          EOF
+
+          systemctl enable --now named
+
+  SINGAPOREIDCDBSRV:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiTd
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SingaporeIDCSubnet
+      SecurityGroupIds:
+        - !Ref SingaporeIDCDBSG
+      PrivateIpAddress: 10.4.1.100
+      Tags:
+        - Key: Name
+          Value: SINGAPOREIDCDBSRV
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf -y update
+          dnf -y install mysql-server
+          cat <<EOF > /etc/my.cnf.d/replication.cnf
+          [mysqld]
+          server-id=2
+          read_only=ON
+          relay-log=relay-bin
+          log_bin=mysql-bin
+          binlog_format=ROW
+          EOF
+          systemctl enable mysqld
+          systemctl start mysqld
+          mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${MysqlRootPassword}';"
+          mysql -uroot -p'${MysqlRootPassword}' -e "CREATE USER '${MysqlReplUser}'@'10.2.%' IDENTIFIED BY '${MysqlReplPassword}';"
+          mysql -uroot -p'${MysqlRootPassword}' -e "GRANT REPLICATION SLAVE ON *.* TO '${MysqlReplUser}'@'10.2.%'; FLUSH PRIVILEGES;"
+
+  SingaporeCGWEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: SingaporeIDCAttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: SingaporeCGWEIP
+
+  SINGAPOREIDCCGW:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: ami-0058131e22d7c740c
+      KeyName: !Ref KeyName
+      SubnetId: !Ref SingaporeIDCSubnet
+      SecurityGroupIds:
+        - !Ref SingaporeCGWSG
+      SourceDestCheck: false
+      PrivateIpAddress: 10.4.1.10
+      Tags:
+        - Key: Name
+          Value: SINGAPOREIDCCGW
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf -y update
+          dnf -y install libreswan frr bind-utils
+          echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-cgw.conf
+          sysctl -p /etc/sysctl.d/99-cgw.conf
+          systemctl enable ipsec || true
+          systemctl enable frr || true
+          echo 'Rocky Linux CGW created' > /root/cgw.txt
+
+  SingaporeCGWEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt SingaporeCGWEIP.AllocationId
+      InstanceId: !Ref SINGAPOREIDCCGW
+
+# =========================
+# Transit Gateway + Route Table
+# =========================
+  SingaporeTGW:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      AmazonSideAsn: 64513
+      AutoAcceptSharedAttachments: disable
+      DefaultRouteTableAssociation: disable
+      DefaultRouteTablePropagation: disable
+      DnsSupport: enable
+      VpnEcmpSupport: enable
+      Tags:
+        - Key: Name
+          Value: SingaporeTGW
+
+  SingaporeTGWRouteTable:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      TransitGatewayId: !Ref SingaporeTGW
+      Tags:
+        - Key: Name
+          Value: SingaporeTGWRouteTable
+
+# =========================
+# TGW upper side = AWS VPC Attachment
+# =========================
+  SingaporeAwsVpcAttachment:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref SingaporeTGW
+      VpcId: !Ref SingaporeVPC
+      SubnetIds:
+        - !Ref SingaporeTGWSubnetA
+        - !Ref SingaporeTGWSubnetC
+      Tags:
+        - Key: Name
+          Value: SingaporeAwsVpcAttachment
+
+  SingaporeAwsVpcAttachmentAssociation:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !Ref SingaporeAwsVpcAttachment
+      TransitGatewayRouteTableId: !Ref SingaporeTGWRouteTable
+
+  SingaporeAwsVpcAttachmentPropagation:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref SingaporeAwsVpcAttachment
+      TransitGatewayRouteTableId: !Ref SingaporeTGWRouteTable
+
+# =========================
+# TGW lower side = IDC VPN Attachment
+# =========================
+  SingaporeCustomerGateway:
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      BgpAsn: !Ref CgwBgpAsn
+      IpAddress: !Ref SingaporeCGWEIP
+      Type: ipsec.1
+      Tags:
+        - Key: Name
+          Value: SingaporeCustomerGateway
+
+  SingaporeIdcVpnConnection:
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      Type: ipsec.1
+      TransitGatewayId: !Ref SingaporeTGW
+      CustomerGatewayId: !Ref SingaporeCustomerGateway
+      StaticRoutesOnly: true
+      VpnTunnelOptionsSpecifications:
+        - PreSharedKey: !Ref Tunnel1Psk
+          TunnelInsideCidr: !Ref Tunnel1InsideCidr
+        - PreSharedKey: !Ref Tunnel2Psk
+          TunnelInsideCidr: !Ref Tunnel2InsideCidr
+      Tags:
+        - Key: Name
+          Value: SingaporeIdcVpnConnection
+
+  SingaporeIdcVpnStaticRoute:
+    Type: AWS::EC2::VPNConnectionRoute
+    Properties:
+      DestinationCidrBlock: 10.4.0.0/16
+      VpnConnectionId: !Ref SingaporeIdcVpnConnection
+
+  SingaporeIdcVpnAttachmentAssociation:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !GetAtt SingaporeIdcVpnConnection.TransitGatewayAttachmentId
+      TransitGatewayRouteTableId: !Ref SingaporeTGWRouteTable
+
+  SingaporeIdcVpnAttachmentPropagation:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !GetAtt SingaporeIdcVpnConnection.TransitGatewayAttachmentId
+      TransitGatewayRouteTableId: !Ref SingaporeTGWRouteTable
+
+# =========================
+# VPC Route Tables -> TGW
+# =========================
+  SingaporeRouteToIDCFromWebA:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeAwsVpcAttachment
+    Properties:
+      RouteTableId: !Ref SingaporePrivateWebRTA
+      DestinationCidrBlock: 10.4.0.0/16
+      TransitGatewayId: !Ref SingaporeTGW
+
+  SingaporeRouteToIDCFromWebC:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeAwsVpcAttachment
+    Properties:
+      RouteTableId: !Ref SingaporePrivateWebRTC
+      DestinationCidrBlock: 10.4.0.0/16
+      TransitGatewayId: !Ref SingaporeTGW
+
+  SingaporeRouteToAWSSeoulFromWebA:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeAwsVpcAttachment
+    Properties:
+      RouteTableId: !Ref SingaporePrivateWebRTA
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayId: !Ref SingaporeTGW
+
+  SingaporeRouteToAWSSeoulFromWebC:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeAwsVpcAttachment
+    Properties:
+      RouteTableId: !Ref SingaporePrivateWebRTC
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayId: !Ref SingaporeTGW
+
+  SingaporeRouteToIDCSeoulFromWebA:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeAwsVpcAttachment
+    Properties:
+      RouteTableId: !Ref SingaporePrivateWebRTA
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayId: !Ref SingaporeTGW
+
+  SingaporeRouteToIDCSeoulFromWebC:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeAwsVpcAttachment
+    Properties:
+      RouteTableId: !Ref SingaporePrivateWebRTC
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayId: !Ref SingaporeTGW
+
+
+
+
+# =========================================================
+# Later update after peering acceptance
+# 1) Seoul 리전에서 peering 요청 생성
+# 2) Singapore 리전에서 peering 수락
+# 3) Singapore TGW Route Table ID 확인
+# 4) 수락된 peering attachment ID 확인
+# 5) 아래 주석 해제 후 업데이트
+# =========================================================
+  # SingaporeTgwStaticRouteToSeoulAws:
+  #   Type: AWS::EC2::TransitGatewayRoute
+  #   Properties:
+  #     DestinationCidrBlock: 10.1.0.0/16
+  #     TransitGatewayRouteTableId: tgw-rtb-싱가폴TGW라우팅테이블ID
+  #     TransitGatewayAttachmentId: tgw-attach-수락된peeringattachmentID
+
+  # SingaporeTgwStaticRouteToSeoulIdc:
+  #   Type: AWS::EC2::TransitGatewayRoute
+  #   Properties:
+  #     DestinationCidrBlock: 10.2.0.0/16
+  #     TransitGatewayRouteTableId: tgw-rtb-싱가폴TGW라우팅테이블ID
+  #     TransitGatewayAttachmentId: tgw-attach-수락된peeringattachmentID
+
+
+
+
+# =========================
+# TGW Route Table - static routes
+# =========================
+  SingaporeTgwRouteToAwsVpc:
+    Type: AWS::EC2::TransitGatewayRoute
+    DependsOn: SingaporeAwsVpcAttachmentAssociation
+    Properties:
+      DestinationCidrBlock: 10.3.0.0/16
+      TransitGatewayAttachmentId: !Ref SingaporeAwsVpcAttachment
+      TransitGatewayRouteTableId: !Ref SingaporeTGWRouteTable
+
+  SingaporeTgwRouteToIdcVpc:
+    Type: AWS::EC2::TransitGatewayRoute
+    DependsOn: SingaporeIdcVpnAttachmentAssociation
+    Properties:
+      DestinationCidrBlock: 10.4.0.0/16
+      TransitGatewayAttachmentId: !GetAtt SingaporeIdcVpnConnection.TransitGatewayAttachmentId
+      TransitGatewayRouteTableId: !Ref SingaporeTGWRouteTable
+
+# =========================
+# IDC Route Entries to CGW ENI
+# =========================
+  SingaporeCgwEni:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref SingaporeIDCSubnet
+      PrivateIpAddress: 10.4.1.11
+      GroupSet:
+        - !Ref SingaporeCGWSG
+      SourceDestCheck: false
+      Tags:
+        - Key: Name
+          Value: SingaporeCgwEni
+
+  SingaporeCgwEniAttach:
+    Type: AWS::EC2::NetworkInterfaceAttachment
+    Properties:
+      DeviceIndex: '1'
+      InstanceId: !Ref SINGAPOREIDCCGW
+      NetworkInterfaceId: !Ref SingaporeCgwEni
+
+  SingaporeIDCToAWSRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeCgwEniAttach
+    Properties:
+      RouteTableId: !Ref SingaporeIDCRT
+      DestinationCidrBlock: 10.3.0.0/16
+      NetworkInterfaceId: !Ref SingaporeCgwEni
+
+  SingaporeIDCToAWSSeoulRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeCgwEniAttach
+    Properties:
+      RouteTableId: !Ref SingaporeIDCRT
+      DestinationCidrBlock: 10.1.0.0/16
+      NetworkInterfaceId: !Ref SingaporeCgwEni
+
+  SingaporeIDCToIDCSeoulRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeCgwEniAttach
+    Properties:
+      RouteTableId: !Ref SingaporeIDCRT
+      DestinationCidrBlock: 10.2.0.0/16
+      NetworkInterfaceId: !Ref SingaporeCgwEni
+
+
+
+
+
+Outputs:
+#서울 스택 배포할 때 피어링 요청 대상 TGW ID로 사용
+  SingaporeTGWId:
+    Value: !Ref SingaporeTGW
+
+#싱가포르 static route 업데이트할 때 필요
+  SingaporeTGWRouteTableId:
+    Value: !Ref SingaporeTGWRouteTable
+
+

@@ -215,8 +215,8 @@ Resources:
   #   Type: AWS::EC2::TransitGatewayRoute
   #   Properties:
   #     DestinationCidrBlock: 10.1.0.0/16
-  #     TransitGatewayRouteTableId: tgw-rtb-싱가폴TGW라우팅테이블ID
-  #     TransitGatewayAttachmentId: tgw-attach-수락된peeringattachmentID
+  #     TransitGatewayRouteTableId: tgw-rtb-0d5d1feda1989e435      #tgw-rtb-싱가폴TGW라우팅테이블ID
+  #     TransitGatewayAttachmentId: tgw-attach-040799419e07e9e9b      #tgw-attach-수락된peeringattachmentID
 
 Outputs:
   SingaporeTransitGatewayID:
